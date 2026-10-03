@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import insert, select
+from sqlalchemy import delete, insert, select
 
 from docsmind.adapters.storage.postgres.engine import get_sessionmaker
 from docsmind.adapters.storage.postgres.tables import (
@@ -31,6 +31,9 @@ from docsmind.adapters.storage.postgres.tables import (
 )
 from docsmind.adapters.storage.postgres.tables import (
     sections as sections_table,
+)
+from docsmind.adapters.storage.postgres.tables import (
+    tables as tables_table,
 )
 from docsmind.config import DocsmindConfig
 from docsmind.domain.documents import (
@@ -137,6 +140,27 @@ class PostgresRepository:
                     insert(chunks_table),
                     [self._chunk_row(c) for c in parsed.chunks],
                 )
+            if parsed.tables:
+                await session.execute(
+                    insert(tables_table),
+                    [
+                        {
+                            "id": t.id,
+                            "version_id": t.version_id,
+                            "page_number": t.page_number,
+                            "bbox_x0": t.bbox[0],
+                            "bbox_y0": t.bbox[1],
+                            "bbox_x1": t.bbox[2],
+                            "bbox_y1": t.bbox[3],
+                            "uri": t.uri,
+                            "width": t.width,
+                            "height": t.height,
+                            "format": t.format,
+                            "phash": t.phash,
+                        }
+                        for t in parsed.tables
+                    ],
+                )
             await session.commit()
 
     @staticmethod
@@ -205,6 +229,7 @@ class PostgresRepository:
         async with self._sessionmaker() as session:
             stmt = (
                 select(
+                    documents_table.c.id.label("document_id"),
                     documents_table.c.title,
                     documents_table.c.collection,
                     document_versions_table.c.id,
@@ -222,6 +247,79 @@ class PostgresRepository:
             )
             result = await session.execute(stmt)
             return [dict(row) for row in result.mappings().all()]
+
+    async def get_version(self, version_id: UUID) -> dict | None:
+        """Metadata for one version, joined back to its parent `Document` —
+        everything the detail view needs besides full text/outline/chunks."""
+        async with self._sessionmaker() as session:
+            stmt = (
+                select(
+                    documents_table.c.id.label("document_id"),
+                    documents_table.c.title,
+                    documents_table.c.collection,
+                    document_versions_table.c.id,
+                    document_versions_table.c.label,
+                    document_versions_table.c.created_at,
+                    document_versions_table.c.char_count,
+                    document_versions_table.c.word_count,
+                    document_versions_table.c.token_count_estimate,
+                )
+                .select_from(
+                    document_versions_table.join(
+                        documents_table, documents_table.c.id == document_versions_table.c.document_id
+                    )
+                )
+                .where(document_versions_table.c.id == version_id)
+            )
+            result = await session.execute(stmt)
+            row = result.mappings().first()
+            return dict(row) if row else None
+
+    async def get_version_by_content_hash(self, content_hash: str) -> dict | None:
+        """Look up an already-ingested version by its file content hash —
+        used *before* parsing to detect "this exact file is already here"
+        without wastefully re-extracting images/tables first. Returns the
+        same shape as `get_version` (joined back to the parent `Document`)."""
+        async with self._sessionmaker() as session:
+            stmt = (
+                select(
+                    documents_table.c.id.label("document_id"),
+                    documents_table.c.title,
+                    documents_table.c.collection,
+                    document_versions_table.c.id,
+                    document_versions_table.c.label,
+                    document_versions_table.c.created_at,
+                )
+                .select_from(
+                    document_versions_table.join(
+                        documents_table, documents_table.c.id == document_versions_table.c.document_id
+                    )
+                )
+                .where(document_versions_table.c.content_hash == content_hash)
+            )
+            result = await session.execute(stmt)
+            row = result.mappings().first()
+            return dict(row) if row else None
+
+    async def delete_version(self, version_id: UUID) -> bool:
+        """Delete one `DocumentVersion` and everything that hangs off it
+        (sections/images/tables/chunks all have `ON DELETE CASCADE` back to
+        `document_versions` — see migrations 0001-0003). Useful for clearing
+        out a version that was ingested before a pipeline fix (e.g. the
+        image-dedup / table-persistence fixes) so it can be cleanly
+        re-ingested. Does *not* delete the parent `Document` row, even if
+        this was its only version — `documents` rows are cheap and harmless
+        to leave orphaned, and deleting them too would cascade-delete any
+        sibling versions.
+
+        Returns True if a row was deleted, False if `version_id` didn't exist.
+        """
+        async with self._sessionmaker() as session:
+            result = await session.execute(
+                delete(document_versions_table).where(document_versions_table.c.id == version_id)
+            )
+            await session.commit()
+            return result.rowcount > 0
 
     async def get_full_text(self, version_id: UUID) -> str | None:
         async with self._sessionmaker() as session:
@@ -265,5 +363,30 @@ class PostgresRepository:
             )
             if page is not None:
                 stmt = stmt.where(chunks_table.c.page_start == page)
+            result = await session.execute(stmt)
+            return [dict(row) for row in result.mappings().all()]
+
+    async def get_images(self, version_id: UUID) -> list[dict]:
+        """Saved images for one version, in page order — `uri` is a
+        `file://...` (or other `BlobStore`-specific) URI; the server layer
+        resolves these into servable URLs, not this repository."""
+        async with self._sessionmaker() as session:
+            stmt = (
+                select(images_table)
+                .where(images_table.c.version_id == version_id)
+                .order_by(images_table.c.page_number)
+            )
+            result = await session.execute(stmt)
+            return [dict(row) for row in result.mappings().all()]
+
+    async def get_tables(self, version_id: UUID) -> list[dict]:
+        """Saved extracted tables (rendered as images) for one version, in
+        page order."""
+        async with self._sessionmaker() as session:
+            stmt = (
+                select(tables_table)
+                .where(tables_table.c.version_id == version_id)
+                .order_by(tables_table.c.page_number)
+            )
             result = await session.execute(stmt)
             return [dict(row) for row in result.mappings().all()]

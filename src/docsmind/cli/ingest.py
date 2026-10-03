@@ -16,7 +16,12 @@ def ingest(
     ),
 ) -> None:
     from docsmind import Docsmind
+    from docsmind.domain.errors import DocumentAlreadyExistsError
 
     dm = Docsmind()
-    result = dm.ingest(path, collection=collection, version=version)
+    try:
+        result = dm.ingest(path, collection=collection, version=version)
+    except DocumentAlreadyExistsError as exc:
+        console.print(f"[yellow]Already ingested.[/yellow] {exc}")
+        raise typer.Exit(code=1) from None
     console.print(f"[green]Ingested[/green] {path.name} -> version {result.id} ({result.label})")

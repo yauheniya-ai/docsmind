@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "docsmind"
-version = "0.2.0"
+version = "0.3.1"
 description = "Chat with your documents. Version-aware retrieval, change analysis, and an editable table workspace, backed by Postgres/pgvector."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -43,7 +43,7 @@ dependencies = [
 [project.optional-dependencies]
 openai = ["openai>=1.30"]
 anthropic = ["anthropic>=0.34"]
-server = ["fastapi>=0.111", "uvicorn[standard]>=0.30"]
+server = ["fastapi>=0.111", "uvicorn[standard]>=0.30", "python-multipart>=0.0.9"]
 mlflow = ["mlflow>=2.14"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "testcontainers[postgres]>=4.4", "ruff>=0.5", "mypy>=1.10"]
 all = ["docsmind[openai,anthropic,server]"]
@@ -61,6 +61,15 @@ Issues = "https://github.com/yauheniya-ai/docsmind/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/docsmind"]
+include = ["src/docsmind/server/ui/**"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/docsmind/**",
+  "README.md",
+  "CHANGELOG.md",
+  "scripts/bundle_frontend.py",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

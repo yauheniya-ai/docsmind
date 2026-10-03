@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-10-03
+
+### Added
+
+- Bundled frontend UI in the Python package: release UI assets are copied into
+  `src/docsmind/server/ui` and served by `docsmind serve` at `/`.
+- `scripts/bundle_frontend.py` helper to copy `../frontend/dist` into the package
+  before publishing.
+- `docsmind delete <version-id> [-y]` command to remove one ingested version and
+  its derived sections/chunks/images/tables.
+- HTTP `DELETE /api/documents/{version_id}` endpoint.
+
+### Changed
+
+- `docsmind serve` now serves the bundled SPA (when present), in addition to
+  `/api/*` and `/blobs/*`.
+- Ingestion now checks `content_hash` before parsing and raises a friendly
+  "already ingested" error instead of surfacing a raw Postgres unique-constraint
+  failure.
+
+### Fixed
+
+- Image extraction de-duplicates repeated embedded images (e.g. page logo reused
+  across many pages) using perceptual hash, preventing inflated image counts.
+- API duplicate-ingest responses now return HTTP 409 with structured details.
+
+
+
 ## [0.2.0] - 2026-09-27
 
 First functional release: documents can now be ingested from PDF into
@@ -70,9 +98,7 @@ implemented" below).
 - Embeddings and hybrid vector/keyword search. Chunks are stored without
   embeddings, and `hybrid_search` raises `NotImplementedError`.
 - Image captioning with a vision model.
-- The chat agent behind `docsmind chat` and the change-analysis subagent
-  behind `docsmind diff`. Both commands exist but have no implementation
-  behind them yet.
+- The chat agent behind `docsmind chat`.
 - DOCX and plain-text parsers, S3/Supabase blob storage, and the server/UI.
 - Multi-column reading order: PDFs with genuine multi-column layouts may have
   their text interleaved in the saved full text.

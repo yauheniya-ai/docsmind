@@ -17,6 +17,7 @@ from docsmind.adapters.blobs.filesystem import FilesystemBlobStore
 from docsmind.adapters.storage.postgres.repository import PostgresRepository
 from docsmind.config import DocsmindConfig
 from docsmind.domain.documents import Document, DocumentVersion
+from docsmind.domain.errors import DocumentAlreadyExistsError
 
 _PARSERS_BY_SUFFIX = {
     ".pdf": "docsmind.ingestion.parsers.pdf:PDFParser",
@@ -32,10 +33,21 @@ class IngestionPipeline:
         self.blob_store = self._make_blob_store(config)
 
     async def run(self, path: Path, *, collection: str, version_label: str | None = None) -> DocumentVersion:
+        content_hash = self._hash_file(path)
+
+        # Check *before* parsing: parsing a PDF re-extracts every image and
+        # table and writes them all to blob storage, which is pure waste if
+        # this exact file is already ingested (content_hash is globally
+        # unique on `document_versions`). Without this check, a re-ingest of
+        # an unchanged file would still pay the full parse cost and then
+        # fail with a raw Postgres IntegrityError on the final insert.
+        existing = await self.repo.get_version_by_content_hash(content_hash)
+        if existing is not None:
+            raise DocumentAlreadyExistsError(content_hash=content_hash, existing_version=existing)
+
         parser = self._make_parser(path)
 
         document = Document(collection=collection, title=path.stem)
-        content_hash = self._hash_file(path)
         # Version is optional: most people ingesting a one-off document don't
         # have a meaningful label yet. Today's date is a reasonable default —
         # readable, sorts chronologically, and doesn't collide across

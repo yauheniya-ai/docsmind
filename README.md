@@ -4,8 +4,6 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/docsmind.svg)](https://pypi.org/project/docsmind/)
 [![Downloads](https://static.pepy.tech/badge/docsmind)](https://pepy.tech/project/docsmind)
 [![Downloads / month](https://static.pepy.tech/badge/docsmind/month)](https://pepy.tech/project/docsmind)
-[![Tests](https://github.com/yauheniya-ai/docsmind/actions/workflows/test.yml/badge.svg)](https://github.com/yauheniya-ai/docsmind/actions/workflows/test.yml)
-[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/yauheniya-ai/<GIST_ID>/raw/docsmind-coverage.json)](https://github.com/yauheniya-ai/docsmind/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/pypi/l/docsmind.svg)](https://github.com/yauheniya-ai/docsmind/blob/main/LICENSE)
 [![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#status)
@@ -28,11 +26,13 @@ its compliance implications, with citations back to exact pages.
 | ✅ Postgres + pgvector storage | Local Docker, or any Postgres with pgvector (Neon, Supabase) |
 | ✅ Inspection CLI | `versions`, `fulltext`, `outline`, `chunks` read back exactly what was saved |
 | ✅ `docsmind doctor` | Checks database, blob storage and API keys, and tells you what to fix |
-| 🚧 Embeddings + hybrid search | Chunks are stored without embeddings for now |
-| 🚧 Image captioning | Images are extracted and stored; vision captioning is next |
+| ✅ Table extraction | Extract and store tables skipping repeating ones (e.g. headers or footers) |
+| ✅ server + UI | FastAPI backend (`docsmind serve`) + React UI (`frontend/`): add documents, browse indexed content, image and table galleries |
 | 🚧 Chat agent (the Mind) | `docsmind chat` exists as a command, without an agent behind it yet |
+| 🚧 Image captioning | Images are extracted and stored; vision captioning is next |
+| 🚧 Embeddings + hybrid search | Chunks are stored without embeddings for now |
 | 🚧 Change analysis (diffra) | `docsmind diff` exists as a command, without an implementation yet |
-| 🚧 DOCX/text parsers, S3/Supabase blob storage, server + UI | Planned |
+| 🚧 DOCX/text parsers, S3/Supabase blob storage | Planned |
 
 ## Install
 
@@ -42,7 +42,7 @@ pip install docsmind
 pip install "docsmind[all]"
 ```
 
-Extras: `docsmind[openai]`, `docsmind[anthropic]`, `docsmind[server]` (FastAPI, planned UI),
+Extras: `docsmind[openai]`, `docsmind[anthropic]`, `docsmind[server]` (FastAPI, serves the bundled UI),
 `docsmind[mlflow]` (tracing/eval export). Requires Python 3.10+.
 
 ## Quickstart
@@ -104,7 +104,33 @@ docsmind chunks <version-id> --page 12  # the chunk(s) saved for one page
 
 You can also inspect the tables directly with `docsmind db psql`.
 
-### 4. Coming next
+### 4. Browse it in the UI
+
+```bash
+pip install "docsmind[server]"
+docsmind serve              # FastAPI backend on http://127.0.0.1:8000
+```
+
+Open `http://127.0.0.1:8000`.
+
+The React UI is bundled into the Python package and served directly by `docsmind serve`
+from `docsmind/src/docsmind/server/ui`.
+
+Clicking **+ Add Document** in the UI runs the same `docsmind ingest` pipeline on the
+uploaded PDF. Selecting a document shows its saved full text/outline (**Content**), and
+galleries of everything extracted from it (**Images**, **Tables**).
+
+For contributors refreshing bundled UI assets before a release:
+
+```bash
+cd ../frontend
+npm install
+npm run build
+cd ../docsmind
+python scripts/bundle_frontend.py
+```
+
+### 5. Coming next
 
 ```python
 print(dm.chat("What are our data retention obligations?"))   # planned
@@ -126,6 +152,9 @@ heuristics that work on one PDF break on the next.
   reconstruct structure.
 - **Images** are extracted with their page and position, skipping tiny icons, and saved
   under a readable path: `images/<collection>/<title>/<version>-<id>/`.
+  Visually repeated images (e.g. logo on every page) are de-duplicated by perceptual hash.
+- **Tables** are detected with PyMuPDF and rendered as PNG snippets, saved under
+  `tables/<collection>/<title>/<version>-<id>/`.
 
 ## CLI reference
 
@@ -136,8 +165,10 @@ heuristics that work on one PDF break on the next.
 | `docsmind fulltext <id> [--full]` | Print the saved full text |
 | `docsmind outline <id>` | Print the saved outline |
 | `docsmind chunks <id> [--page N] [--full]` | Print saved chunks |
+| `docsmind delete <id> [-y]` | Delete one version and its derived chunks/images/tables |
 | `docsmind db up` / `upgrade` / `psql` | Start local Postgres, apply migrations, open psql |
 | `docsmind doctor` | Check your setup |
+| `docsmind serve [--host] [--port] [--reload]` | Run the FastAPI backend for the `frontend/` UI |
 | `docsmind chat`, `docsmind diff` | Planned |
 
 ## Architecture
@@ -169,10 +200,21 @@ src/docsmind/
 ├── cli/                   # Typer app: ingest, versions, fulltext, outline, chunks, db, doctor
 ├── retrieval/             # hybrid vector + keyword search (planned)
 ├── agent/                 # the Mind + diffra subagent (planned)
-└── server/                # FastAPI + UI (planned)
+└── server/                # FastAPI app + routes backing frontend/ (documents: ingest, read back content/images/tables)
 
-alembic/   tests/   examples/   docs/   ui/
+alembic/   tests/   examples/   docs/
 ```
+
+The UI source lives one level up as a sibling project: `frontend/` (React + TypeScript +
+TailwindCSS, see the repo-root `CLAUDE.md`). Release builds are bundled into
+`src/docsmind/server/ui` and served by `server/app.py` at `/`. The UI talks to `server/`
+over `/api/*`, and loads extracted images/tables straight from disk via `/blobs/*`.
+
+## Artwork attribution
+
+- Workspace 3D graph artwork inspiration: Angela Galliat,
+  "Neural nervous system of a brain" (CodePen):
+  https://codepen.io/agalliat/pen/vYGXJxQ
 
 ### Design notes
 
@@ -188,7 +230,9 @@ alembic/   tests/   examples/   docs/   ui/
   Outline paths (e.g. `03.13.11`) give version comparison something stable to align on
   where a document has a table of contents.
 - **Tables are shared state, not a UI feature.** `AgentTable` is a domain object that
-  both the agent and the user write to (append-only revisions).
+  both the agent and the user write to (append-only revisions). This is distinct from
+  the `tables` storage table (extracted PDF table *regions*, rendered as images
+  alongside `images` — browsable read-only in the UI's **Tables** gallery).
 
 ## Development
 

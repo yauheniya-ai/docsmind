@@ -26,7 +26,9 @@ class Document(BaseModel):
     collection: str
     title: str
     tenant_id: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
 
 
 class DocumentVersion(BaseModel):
@@ -39,7 +41,9 @@ class DocumentVersion(BaseModel):
     content_hash: str
     supersedes_id: UUID | None = None
     blob_uri: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
 
 
 class Section(BaseModel):
@@ -81,6 +85,24 @@ class Image(BaseModel):
     captioned_at: datetime | None = None
 
 
+class Table(BaseModel):
+    """A table extracted from a document version.
+
+    Tables are stored as rendered images in blob storage, analogous to
+    extracted images. No structured table contents are stored here.
+    """
+
+    id: UUID = Field(default_factory=uuid4)
+    version_id: UUID
+    page_number: int
+    bbox: tuple[float, float, float, float]  # x0, y0, x1, y1
+    uri: str
+    width: int
+    height: int
+    format: str
+    phash: str | None = None
+
+
 class Chunk(BaseModel):
     """A retrievable unit for vector search: prose for text chunks, caption
     for image chunks. Chunked purely by page (see `ingestion/chunking/page.py`)
@@ -115,13 +137,20 @@ class ParsedDocument(BaseModel):
     `full_text` is the entire document's extracted text, saved as-is — this
     is the ground truth a person or an LLM can read directly, independent of
     how it later gets chunked for vector search. Sections are returned
-    alongside chunks/images (rather than being implicit in `Chunk.section_id`)
-    because the pipeline needs to insert them first — `chunks.section_id` and
-    `images` don't exist as rows until sections do.
+    alongside chunks/images/tables (rather than being implicit in
+    `Chunk.section_id`) because the pipeline needs to insert them first.
     """
 
     full_text: str = ""
-    stats: DocumentStats = Field(default_factory=lambda: DocumentStats(char_count=0, word_count=0, token_count_estimate=0))
+    stats: DocumentStats = Field(
+        default_factory=lambda: DocumentStats(
+            char_count=0,
+            word_count=0,
+            token_count_estimate=0,
+        )
+    )
     sections: list[Section] = Field(default_factory=list)
     chunks: list[Chunk] = Field(default_factory=list)
     images: list[Image] = Field(default_factory=list)
+    tables: list[Table] = Field(default_factory=list)
+

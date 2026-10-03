@@ -23,6 +23,7 @@ app.command("doctor")(doctor.doctor)
 from docsmind.cli import chat as _chat
 from docsmind.cli import diff as _diff
 from docsmind.cli import inspect as _inspect
+from docsmind.cli import serve as _serve
 
 app.command("chat")(_chat.chat)
 app.command("diff")(_diff.diff)
@@ -30,6 +31,8 @@ app.command("versions")(_inspect.versions)
 app.command("fulltext")(_inspect.fulltext)
 app.command("outline")(_inspect.outline)
 app.command("chunks")(_inspect.chunks)
+app.command("delete")(_inspect.delete)
+app.command("serve")(_serve.serve)
 
 
 def main() -> None:

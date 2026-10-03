@@ -170,3 +170,40 @@ def chunks(
                 console.print(f"[{label}] TEXT ({word_count} words): {preview}{suffix}")
 
     asyncio.run(_run())
+
+
+def delete(
+    version_id: UUID = typer.Argument(..., help="A version id from `docsmind versions`."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+) -> None:
+    """Delete one ingested version (sections/images/tables/chunks cascade with it).
+
+    Useful for clearing out a version that was ingested before a pipeline
+    fix landed (e.g. the image-dedup or table-persistence fixes) so you can
+    re-ingest the same file cleanly afterwards — re-ingesting identical bytes
+    is otherwise a no-op (see `DocumentAlreadyExistsError`).
+    """
+
+    async def _run() -> None:
+        from docsmind.adapters.storage.postgres.repository import PostgresRepository
+        from docsmind.config import DocsmindConfig
+
+        repo = PostgresRepository(DocsmindConfig())
+        existing = await repo.get_version(version_id)
+        if existing is None:
+            console.print(f"[yellow]No version found with id {version_id}.[/yellow]")
+            return
+
+        if not yes:
+            confirm = typer.confirm(
+                f"Delete '{existing['title']}' ({existing['collection']} / {existing['label']}, "
+                f"version {version_id})? This also deletes its chunks, images and tables."
+            )
+            if not confirm:
+                console.print("Aborted.")
+                return
+
+        await repo.delete_version(version_id)
+        console.print(f"[green]Deleted[/green] version {version_id}.")
+
+    asyncio.run(_run())

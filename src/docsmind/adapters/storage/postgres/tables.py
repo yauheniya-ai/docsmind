@@ -96,6 +96,23 @@ images = Table(
     Column("captioned_at", DateTime(timezone=True), nullable=True),
 )
 
+tables = Table(
+    "tables",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("version_id", UUID(as_uuid=True), ForeignKey("document_versions.id", ondelete="CASCADE"), nullable=False),
+    Column("page_number", Integer, nullable=False),
+    Column("bbox_x0", Float, nullable=False),
+    Column("bbox_y0", Float, nullable=False),
+    Column("bbox_x1", Float, nullable=False),
+    Column("bbox_y1", Float, nullable=False),
+    Column("uri", Text, nullable=False),
+    Column("width", Integer, nullable=False),
+    Column("height", Integer, nullable=False),
+    Column("format", Text, nullable=False),
+    Column("phash", Text, nullable=True),
+)
+
 _chunks_columns = [
     Column("id", UUID(as_uuid=True), primary_key=True),
     Column("version_id", UUID(as_uuid=True), ForeignKey("document_versions.id", ondelete="CASCADE"), nullable=False),
