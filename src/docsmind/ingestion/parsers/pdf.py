@@ -40,7 +40,7 @@ from docsmind.domain.documents import (
     Table,
 )
 from docsmind.domain.ports import BlobStore
-from docsmind.ingestion.chunking.page import chunk_page_text
+from docsmind.ingestion.chunking.page import chunk_page_text, merge_small_chunks
 
 
 # Applied only to TOC titles (not body text) to give a section a clean
@@ -130,6 +130,10 @@ class PDFParser:
                         page_number=page_number,
                     )
                 )
+
+            # Fold near-empty chunks (title pages, blank-ish pages) into
+            # neighbors; the merged chunk's page range spans its sources.
+            chunks = merge_small_chunks(chunks)
 
             # -----------------------------------------------------------------
             # Images + tables

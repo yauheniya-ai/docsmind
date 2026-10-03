@@ -10,6 +10,7 @@ to build (see `PostgresRepository.hybrid_search`'s TODO).
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -61,11 +62,28 @@ class IngestionPipeline:
 
         parsed = await parser.parse(str(path), document=document, version=version)
 
+        # Keep the original file next to the extracted images/tables, so the
+        # UI can show the source document (and it survives the upload's temp
+        # directory being cleaned up). `blob_uri` then points at this copy.
+        version.blob_uri = await self._store_original(path, document=document, version=version)
+
         await self.repo.create_document(document)
         await self.repo.create_version(version, full_text=parsed.full_text, stats=parsed.stats)
         await self.repo.save_parsed(parsed)
 
         return version
+
+    async def _store_original(self, path: Path, *, document: Document, version: DocumentVersion) -> str:
+        def slug(text: str) -> str:
+            return re.sub(r"[^a-z0-9]+", "-", text.strip().lower()).strip("-") or "untitled"
+
+        suffix = path.suffix.lower()
+        key = (
+            f"documents/{slug(document.collection)}/{slug(document.title)}/"
+            f"{slug(version.label)}-{version.id.hex[:8]}/original{suffix}"
+        )
+        content_type = "application/pdf" if suffix == ".pdf" else "application/octet-stream"
+        return await self.blob_store.put(key, path.read_bytes(), content_type=content_type)
 
     def _make_parser(self, path: Path):
         suffix = path.suffix.lower()

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "docsmind"
-version = "0.3.1"
+version = "0.3.0"
 description = "Chat with your documents. Version-aware retrieval, change analysis, and an editable table workspace, backed by Postgres/pgvector."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -38,6 +38,7 @@ dependencies = [
     "pillow>=10.0",
     "imagehash>=4.3",
     "rich>=13.7",
+    "tiktoken>=0.7",
 ]
 
 [project.optional-dependencies]

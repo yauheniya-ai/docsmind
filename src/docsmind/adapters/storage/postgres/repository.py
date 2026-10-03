@@ -263,6 +263,7 @@ class PostgresRepository:
                     document_versions_table.c.char_count,
                     document_versions_table.c.word_count,
                     document_versions_table.c.token_count_estimate,
+                    document_versions_table.c.blob_uri,
                 )
                 .select_from(
                     document_versions_table.join(

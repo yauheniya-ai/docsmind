@@ -24,6 +24,59 @@ from docsmind.domain.documents import Chunk, ChunkType
 DEFAULT_TARGET_CHARS = 3_500  # most pages fit in one chunk under this
 DEFAULT_MAX_CHARS = 4_000  # only split a page once it exceeds this
 DEFAULT_OVERLAP_CHARS = 100  # ~50 chars of shared context on each side of a split
+DEFAULT_MIN_CHARS = 500  # chunks shorter than this get merged into a neighbor
+
+
+def merge_small_chunks(
+    chunks: list[Chunk],
+    *,
+    min_chars: int = DEFAULT_MIN_CHARS,
+    max_chars: int = DEFAULT_MAX_CHARS,
+) -> list[Chunk]:
+    """Merge tiny text chunks (title pages, near-empty pages, short tails of
+    split pages) into their neighbors so retrieval doesn't index near-empty
+    passages. The merged chunk's page range spans its sources (e.g. 1-3).
+
+    A chunk shorter than `min_chars` is merged into the following chunk, or
+    into the previous one if it is the last, as long as the result stays
+    within `max_chars`. Expects chunks in document order.
+    """
+
+    def combine(first: Chunk, second: Chunk) -> Chunk:
+        starts = [p for p in (first.page_start, second.page_start) if p is not None]
+        ends = [p for p in (first.page_end, second.page_end) if p is not None]
+        return first.model_copy(
+            update={
+                "content": f"{first.content}\n\n{second.content}",
+                "page_start": min(starts) if starts else None,
+                "page_end": max(ends) if ends else None,
+            }
+        )
+
+    merged: list[Chunk] = []
+    current: Chunk | None = None
+    for chunk in chunks:
+        if current is None:
+            current = chunk
+            continue
+        if (
+            len(current.content) < min_chars
+            and len(current.content) + len(chunk.content) + 2 <= max_chars
+        ):
+            current = combine(current, chunk)
+        else:
+            merged.append(current)
+            current = chunk
+    if current is not None:
+        if (
+            merged
+            and len(current.content) < min_chars
+            and len(merged[-1].content) + len(current.content) + 2 <= max_chars
+        ):
+            merged[-1] = combine(merged[-1], current)
+        else:
+            merged.append(current)
+    return merged
 
 
 def chunk_page_text(

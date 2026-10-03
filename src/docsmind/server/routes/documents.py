@@ -36,6 +36,20 @@ def _blob_url(request: Request, uri: str | None) -> str | None:
     return f"/blobs/{relative.as_posix()}"
 
 
+def _count_tokens(text: str) -> int | None:
+    """Real token count via tiktoken (`cl100k_base`). Returns None if tiktoken
+    or its encoding file is unavailable (e.g. offline on first use)."""
+    if not text:
+        return 0
+    try:
+        import tiktoken
+
+        encoding = tiktoken.get_encoding("cl100k_base")
+        return len(encoding.encode(text, disallowed_special=()))
+    except Exception:  # noqa: BLE001 - stats are best-effort; don't fail the page
+        return None
+
+
 def _repo(request: Request):
     from docsmind.adapters.storage.postgres.repository import PostgresRepository
 
@@ -108,6 +122,7 @@ async def create_document(
     detail = await repo.get_version(result.id)
     if detail is None:
         raise HTTPException(status_code=500, detail="Ingested, but the version could not be read back.")
+    detail["file_url"] = _blob_url(request, detail.pop("blob_uri", None))
     return detail
 
 
@@ -118,6 +133,15 @@ async def get_document(request: Request, version_id: UUID) -> dict:
     if detail is None:
         raise HTTPException(status_code=404, detail="Version not found.")
     detail["chunk_count"] = await repo.count_chunks(version_id)
+    # Original uploaded file (PDF), served from blob storage. None for versions
+    # ingested before originals were stored (re-ingest to get a viewable copy).
+    detail["file_url"] = _blob_url(request, detail.pop("blob_uri", None))
+    text = await repo.get_full_text(version_id) or ""
+    if detail.get("char_count") is None and text:
+        detail["char_count"] = len(text)
+    if detail.get("word_count") is None and text:
+        detail["word_count"] = len(text.split())
+    detail["token_count"] = _count_tokens(text)
     return detail
 
 
