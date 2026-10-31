@@ -38,6 +38,26 @@ class DocsmindConfig(BaseSettings):
 
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
+    openai_base_url: str | None = None  # OpenAI-compatible gateways / local servers
+    # Passed to OpenAI reasoning models (none | minimal | low | medium | high).
+    # Some of them reject function tools on chat-completions unless this is
+    # "none"; the adapter falls back to "none" automatically when that happens.
+    openai_reasoning_effort: str | None = None
+
+    # --- agent (the Mind) ---
+    # Cheaper/faster model for the orchestrator, summarizer and memory writer.
+    # Falls back to `llm_model` when unset.
+    agent_fast_model: str | None = None
+    agent_max_steps: int = 8  # tool-loop iterations per turn (executor)
+    agent_subagent_max_steps: int = 6
+    agent_max_output_tokens: int = 2048
+    agent_max_parallel_tools: int = 4
+    agent_tool_timeout_s: float = 60.0
+    agent_tool_result_max_chars: int = 12_000
+    agent_context_budget_tokens: int = 24_000  # loop context before old tool results are elided
+    agent_history_budget_tokens: int = 6_000  # verbatim chat history before it is summarized
+    agent_recent_turns: int = 4  # user/assistant pairs always kept verbatim
+    agent_memory_enabled: bool = True
 
     # --- ingestion ---
     chunk_size_tokens: int = 700

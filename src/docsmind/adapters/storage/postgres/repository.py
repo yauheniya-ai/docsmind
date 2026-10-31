@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import delete, insert, select
+from sqlalchemy import bindparam, delete, func, insert, select, text
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
 from docsmind.adapters.storage.postgres.engine import get_sessionmaker
 from docsmind.adapters.storage.postgres.tables import (
@@ -212,6 +214,121 @@ class PostgresRepository:
             "embeddings to search over. See adapters/embeddings/ (not yet "
             "built) and enrichment/caption.py (not yet built)."
         )
+
+    # -- agent retrieval ------------------------------------------------------
+    # Read-only queries the Mind's tools run. Keyword (Postgres full-text)
+    # search only for now: chunks don't have embeddings yet, so `hybrid_search`
+    # above is still a stub. When embeddings land, add the vector leg here and
+    # fuse it with this one — the tools call these methods, not SQL.
+
+    async def list_catalog(self, version_ids: list[UUID] | None = None) -> list[dict]:
+        """One row per version (optionally restricted), with the page count
+        derived from its chunks — what the agent sees as "the register"."""
+        pages = (
+            select(
+                chunks_table.c.version_id,
+                func.max(func.coalesce(chunks_table.c.page_end, chunks_table.c.page_start)).label(
+                    "page_count"
+                ),
+            )
+            .group_by(chunks_table.c.version_id)
+            .subquery()
+        )
+        stmt = (
+            select(
+                documents_table.c.id.label("document_id"),
+                documents_table.c.title,
+                documents_table.c.collection,
+                document_versions_table.c.id,
+                document_versions_table.c.label,
+                document_versions_table.c.created_at,
+                document_versions_table.c.word_count,
+                pages.c.page_count,
+            )
+            .select_from(
+                document_versions_table.join(
+                    documents_table, documents_table.c.id == document_versions_table.c.document_id
+                ).outerjoin(pages, pages.c.version_id == document_versions_table.c.id)
+            )
+            .order_by(documents_table.c.title, document_versions_table.c.created_at)
+        )
+        if version_ids is not None:
+            stmt = stmt.where(document_versions_table.c.id.in_(version_ids))
+        async with self._sessionmaker() as session:
+            result = await session.execute(stmt)
+            return [dict(row) for row in result.mappings().all()]
+
+    _SEARCH_SQL = text(
+        """
+        SELECT c.id AS chunk_id, c.version_id, c.page_start, c.page_end, c.content,
+               ts_rank_cd(c.tsv, q.query, 32) AS rank
+        FROM chunks c, to_tsquery('english', :query) AS q(query)
+        WHERE c.tsv @@ q.query
+          AND (CAST(:filter_versions AS boolean) IS FALSE OR c.version_id = ANY(:version_ids))
+        ORDER BY rank DESC, c.page_start
+        LIMIT :limit
+        """
+    ).bindparams(bindparam("version_ids", type_=ARRAY(PGUUID(as_uuid=True))))
+
+    async def keyword_search(
+        self, tsquery: str, *, version_ids: list[UUID] | None = None, limit: int = 8
+    ) -> list[dict]:
+        """Full-text matches ranked by cover density. `tsquery` must already
+        be a safe `to_tsquery` expression (see `retrieval.keyword.build_tsquery`)."""
+        async with self._sessionmaker() as session:
+            result = await session.execute(
+                self._SEARCH_SQL,
+                {
+                    "query": tsquery,
+                    "filter_versions": version_ids is not None,
+                    "version_ids": version_ids or [],
+                    "limit": limit,
+                },
+            )
+            return [dict(row) for row in result.mappings().all()]
+
+    async def grep_chunks(
+        self, needle: str, *, version_ids: list[UUID] | None = None, limit: int = 12
+    ) -> list[dict]:
+        """Case-insensitive literal substring match — for exact phrases,
+        clause numbers and identifiers that stemming-based search blurs."""
+        escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        stmt = (
+            select(
+                chunks_table.c.id.label("chunk_id"),
+                chunks_table.c.version_id,
+                chunks_table.c.page_start,
+                chunks_table.c.page_end,
+                chunks_table.c.content,
+            )
+            .where(chunks_table.c.content.ilike(f"%{escaped}%", escape="\\"))
+            .order_by(chunks_table.c.version_id, chunks_table.c.page_start)
+            .limit(limit)
+        )
+        if version_ids is not None:
+            stmt = stmt.where(chunks_table.c.version_id.in_(version_ids))
+        async with self._sessionmaker() as session:
+            result = await session.execute(stmt)
+            return [dict(row) for row in result.mappings().all()]
+
+    async def get_chunks_for_pages(self, version_id: UUID, start_page: int, end_page: int) -> list[dict]:
+        stmt = (
+            select(
+                chunks_table.c.id.label("chunk_id"),
+                chunks_table.c.page_start,
+                chunks_table.c.page_end,
+                chunks_table.c.content,
+            )
+            .where(
+                chunks_table.c.version_id == version_id,
+                chunks_table.c.page_start <= end_page,
+                func.coalesce(chunks_table.c.page_end, chunks_table.c.page_start) >= start_page,
+            )
+            .order_by(chunks_table.c.page_start, chunks_table.c.id)
+        )
+        async with self._sessionmaker() as session:
+            result = await session.execute(stmt)
+            return [dict(row) for row in result.mappings().all()]
 
     # -- read helpers, mainly for sanity-checking what actually landed -------
 

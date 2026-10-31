@@ -14,6 +14,7 @@ from pathlib import Path
 from uuid import UUID
 
 from docsmind.config import DocsmindConfig
+from docsmind.domain.agent import AgentResult
 from docsmind.domain.changes import ChangeSet
 from docsmind.domain.documents import DocumentVersion
 from docsmind.domain.tables import AgentTable
@@ -33,8 +34,26 @@ class Docsmind:
     def ingest(self, path: str | Path, *, collection: str, version: str | None = None) -> DocumentVersion:
         return _run(self._async.aingest(path, collection=collection, version=version))
 
-    def chat(self, question: str, *, collection: str | None = None) -> str:
-        return _run(self._async.achat(question, collection=collection))
+    def chat(
+        self,
+        question: str,
+        *,
+        collection: str | None = None,
+        conversation_id: UUID | None = None,
+    ) -> str:
+        """Ask the Mind. Pass the previous `conversation_id` (see `AsyncDocsmind.achat_result`)
+        to continue a conversation."""
+        return _run(self._async.achat(question, collection=collection, conversation_id=conversation_id))
+
+    def chat_result(
+        self,
+        question: str,
+        *,
+        collection: str | None = None,
+        conversation_id: UUID | None = None,
+    ) -> AgentResult:
+        """Like `chat`, but returns the full result (citations, conversation id)."""
+        return _run(self._async.achat_result(question, collection=collection, conversation_id=conversation_id))
 
     def compare(self, version_a: UUID, version_b: UUID) -> ChangeSet:
         return _run(self._async.acompare(version_a, version_b))
@@ -61,12 +80,32 @@ class AsyncDocsmind:
         pipeline = IngestionPipeline(config=self.config)
         return await pipeline.run(Path(path), collection=collection, version_label=version)
 
-    async def achat(self, question: str, *, collection: str | None = None) -> str:
+    async def achat(
+        self,
+        question: str,
+        *,
+        collection: str | None = None,
+        conversation_id: UUID | None = None,
+    ) -> str:
+        return (
+            await self.achat_result(question, collection=collection, conversation_id=conversation_id)
+        ).answer
+
+    async def achat_result(
+        self,
+        question: str,
+        *,
+        collection: str | None = None,
+        conversation_id: UUID | None = None,
+    ) -> AgentResult:
+        """Like `achat`, but returns the full result (citations, conversation id, usage)."""
         from docsmind.agent.agent import DocsmindAgent
 
         agent = DocsmindAgent(config=self.config)
-        result = await agent.run(question, collection=collection)
-        return result.answer
+        result = await agent.run(question, collection=collection, conversation_id=conversation_id)
+        # Let the background memory write finish before the caller's event loop goes away.
+        await agent.drain()
+        return result
 
     async def acompare(self, version_a: UUID, version_b: UUID) -> ChangeSet:
         from docsmind.agent.subagents.change_analysis.subagent import ChangeAnalysisSubagent

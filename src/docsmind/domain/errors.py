@@ -7,6 +7,24 @@ behavior (a formatted message) rather than being serializable shapes.
 from __future__ import annotations
 
 
+class LLMConfigurationError(Exception):
+    """The configured LLM provider can't be used (missing API key, SDK not
+    installed, unknown provider). The message says exactly what to fix."""
+
+
+class AgentError(Exception):
+    """The Mind could not produce an answer (message is safe to show)."""
+
+
+class ConversationNotFoundError(AgentError):
+    """The requested conversation id does not exist."""
+
+
+class ToolInputError(Exception):
+    """A tool call had bad arguments. The message is shown to the model so it
+    can correct itself, so keep it short and actionable."""
+
+
 class DocumentAlreadyExistsError(Exception):
     """Raised by `IngestionPipeline.run()` when a file's content hash exactly
     matches an already-ingested version. Re-ingesting identical bytes would

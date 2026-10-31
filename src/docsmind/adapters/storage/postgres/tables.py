@@ -134,6 +134,43 @@ if Vector is not None:
 
 chunks = Table("chunks", metadata, *_chunks_columns)
 
+# Added in migration 0004 — chat history and the harness's long-lived memory.
+conversations = Table(
+    "conversations",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("title", Text, nullable=False),
+    Column("summary", Text, nullable=True),
+    Column("summarized_upto", Integer, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+messages = Table(
+    "messages",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("conversation_id", UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False),
+    Column("ordinal", Integer, nullable=False),
+    Column("role", Text, nullable=False),
+    Column("content", Text, nullable=False),
+    Column("citations", JSONB, nullable=False),
+    Column("meta", JSONB, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+agent_memory = Table(
+    "agent_memory",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("kind", Text, nullable=False),
+    Column("version_id", UUID(as_uuid=True), ForeignKey("document_versions.id", ondelete="CASCADE"), nullable=True),
+    Column("content", Text, nullable=False),
+    Column("key", Text, nullable=False, unique=True),
+    Column("source_conversation_id", UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 agent_tables = Table(
     "agent_tables",
     metadata,

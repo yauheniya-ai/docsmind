@@ -18,6 +18,11 @@ class Citation(BaseModel):
     page_end: int | None = None
     snippet: str
     image_id: UUID | None = None  # set when the citation points at an image chunk
+    # Set by the agent: the short handle the model cites with (e.g. "S3"), and
+    # what the UI needs to link back to the document.
+    handle: str | None = None
+    version_id: UUID | None = None
+    collection: str | None = None
 
     def format_short(self) -> str:
         loc = f"p.{self.page_start}" if self.page_start else ""

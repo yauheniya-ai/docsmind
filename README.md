@@ -11,9 +11,8 @@
 Chat with your documents. Track what changed between versions, and why it matters.
 
 `docsmind` ingests PDFs (and soon DOCX/text) into a version-aware Postgres/pgvector
-store, and gives you an agent, **the Mind**, to chat with them. A built-in subagent,
-**diffra**, will do change analysis between document versions: what changed, where, and
-its compliance implications, with citations back to exact pages.
+store, and gives you an agent, **the Mind**, to analyze them. Built-in subagents
+will perform specialized tasks.
 
 > **Alpha.** Ingestion and inspection work today. Embeddings, chat and change analysis
 > are designed and scaffolded but not implemented yet; see [What works today](#what-works-today).
@@ -28,7 +27,7 @@ its compliance implications, with citations back to exact pages.
 | ✅ `docsmind doctor` | Checks database, blob storage and API keys, and tells you what to fix |
 | ✅ Table extraction | Extract and store tables skipping repeating ones (e.g. headers or footers) |
 | ✅ server + UI | FastAPI backend (`docsmind serve`) + React UI (`frontend/`): add documents, browse indexed content, image and table galleries |
-| 🚧 Chat agent (the Mind) | `docsmind chat` exists as a command, without an agent behind it yet |
+| ✅ Chat agent (the Mind) | Routes each question, plans complex ones, searches/reads your documents with tools, delegates to subagents, and answers with verified `[S#]` citations. Streams to the UI over SSE; conversations are saved |
 | 🚧 Image captioning | Images are extracted and stored; vision captioning is next |
 | 🚧 Embeddings + hybrid search | Chunks are stored without embeddings for now |
 | 🚧 Change analysis (diffra) | `docsmind diff` exists as a command, without an implementation yet |
@@ -73,8 +72,9 @@ docsmind doctor
 ```
 
 Configuration is environment-driven (`DOCSMIND_*`, or a `.env` file). Copy
-`.env.example` to `.env` to see every option. Model API keys aren't needed yet;
-they'll be required once embeddings and chat land.
+`.env.example` to `.env` to see every option. Chat needs an LLM key
+(`DOCSMIND_LLM_PROVIDER` plus `DOCSMIND_ANTHROPIC_API_KEY` or `DOCSMIND_OPENAI_API_KEY`);
+ingestion and browsing don't.
 
 ### 2. Ingest a PDF
 
@@ -130,12 +130,54 @@ cd ../docsmind
 python scripts/bundle_frontend.py
 ```
 
-### 5. Coming next
+### 5. Ask the Mind
+
+In the UI, open **Workspace** and ask a question (needs `docsmind[openai]` or `docsmind[anthropic]`
+plus an API key). From the terminal or Python:
+
+```bash
+docsmind chat "What are our data retention obligations?"   # one-shot
+docsmind chat                                              # REPL, keeps the conversation
+```
 
 ```python
-print(dm.chat("What are our data retention obligations?"))   # planned
-change_set = dm.compare(v1.id, v2.id)                        # planned (diffra)
+result = dm.chat_result("What are our data retention obligations?")
+print(result.answer, result.citations)
+change_set = dm.compare(v1.id, v2.id)   # planned (diffra)
 ```
+
+## How the Mind works
+
+```
+Question -> Orchestrator --simple--> Executor <-> Tools / Subagents -> Answer
+                 |                       ^
+                 +--complex--> Planner --+        Harness feeds every role:
+                                                  context builder, prompt cache,
+                                                  summarizer, memory
+```
+
+- **Orchestrator**: one cheap call that routes the question (`simple` or `complex`) and rewrites
+  it as a standalone question using the conversation so far.
+- **Planner** (complex only): a short list of steps the executor follows.
+- **Executor**: a bounded tool loop (`search`, `grep`, `read_pages`, `get_outline`,
+  `list_documents`, `delegate`). The last step forces an answer; tool errors go back to the
+  model, not the user; old tool results are elided when the context grows.
+- **Subagents** (`researcher`, `change_analyzer`): fresh context, a subset of the tools, run in
+  parallel, cannot delegate further.
+- **Harness**: deterministic code, not another agent. It orders the prompt stable-first so the
+  prefix caches, summarizes long histories, and saves durable notes to memory after each answer.
+- **Citations**: tools register passages as `S1, S2, ...`; the model cites `[S#]`; invented
+  handles are dropped and the rest renumbered by first appearance. Document text is treated as
+  untrusted data, never as instructions.
+- **Search** is Postgres full-text (ranked) plus exact-text grep until embeddings land.
+
+Tuning (all `DOCSMIND_*`): `AGENT_FAST_MODEL` (router/summarizer/memory model, defaults to
+`LLM_MODEL`), `AGENT_MAX_STEPS`, `AGENT_SUBAGENT_MAX_STEPS`, `AGENT_MEMORY_ENABLED`,
+`OPENAI_REASONING_EFFORT`, `OPENAI_BASE_URL`. See `.env.example`.
+
+HTTP: `POST /api/chat` streams Server-Sent Events (`route`, `plan`, `tool_start`, `tool_end`,
+`subagent_start`, `subagent_end`, `token`, `note`, `answer`, `error`, `done`);
+`GET /api/conversations[/{id}]`, `DELETE /api/conversations/{id}`, `GET /api/agent`.
 
 ## How ingestion works
 
@@ -169,7 +211,8 @@ heuristics that work on one PDF break on the next.
 | `docsmind db up` / `upgrade` / `psql` | Start local Postgres, apply migrations, open psql |
 | `docsmind doctor` | Check your setup |
 | `docsmind serve [--host] [--port] [--reload]` | Run the FastAPI backend for the `frontend/` UI |
-| `docsmind chat`, `docsmind diff` | Planned |
+| `docsmind chat [question] [-c <collection>]` | Ask the Mind once, or start a REPL that keeps the conversation |
+| `docsmind diff` | Planned |
 
 ## Architecture
 
@@ -181,7 +224,7 @@ src/docsmind/
 │
 ├── domain/                # pure data + interfaces, no I/O
 │   ├── documents.py       # Document, DocumentVersion, Section, Chunk, Image, ParsedDocument
-│   ├── changes.py         # Change, ChangeSet, ImpactAssessment (diffra)
+│   ├── changes.py         # Change, ChangeSet, ImpactAssessment
 │   ├── citations.py       # Citation
 │   ├── tables.py          # AgentTable, TableRevision
 │   └── ports.py           # LLM, Embedder, VisionCaptioner, VectorStore, BlobStore, Parser
@@ -198,9 +241,9 @@ src/docsmind/
 │   ├── llm/ embeddings/ vision/ tracing/   # planned
 │
 ├── cli/                   # Typer app: ingest, versions, fulltext, outline, chunks, db, doctor
-├── retrieval/             # hybrid vector + keyword search (planned)
-├── agent/                 # the Mind + diffra subagent (planned)
-└── server/                # FastAPI app + routes backing frontend/ (documents: ingest, read back content/images/tables)
+├── retrieval/             # keyword (full-text) search helpers; vector search planned
+├── agent/                 # the Mind: orchestrator, planner, tool loop, tools, subagents, harness
+└── server/                # FastAPI app + routes backing frontend/ (documents, chat SSE, conversations)
 
 alembic/   tests/   examples/   docs/
 ```

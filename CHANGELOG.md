@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-10-31
+
+### Added
+
+- The Mind: a chat agent (orchestrator, planner, tool-using executor, parallel subagents)
+  with a deterministic harness (context builder with prompt-cache breakpoint, summarizer,
+  memory writer). Answers carry verified `[S#]` citations.
+- Provider-neutral LLM layer with OpenAI and Anthropic streaming adapters.
+- Tools: `search`, `grep`, `read_pages`, `get_outline`, `list_documents`, `delegate`;
+  subagents: `researcher`, `change_analyzer`.
+- Migration `0004`: `conversations`, `messages`, `agent_memory` tables (run `docsmind db upgrade`).
+- HTTP: `POST /api/chat` (SSE), `GET/DELETE /api/conversations`, `GET /api/agent`.
+- UI: streaming chat in Workspace with live agent activity, markdown answers, citation chips
+  and source cards that open the PDF at the cited page; Activity lists saved conversations;
+  Agents reads the real registry. New frontend deps: `react-markdown`, `remark-gfm`.
+- `Docsmind.chat_result()`; `chat`/`achat` accept `conversation_id`; `docsmind chat` REPL keeps
+  the conversation.
+- Config: `agent_*` settings, `openai_base_url`, `openai_reasoning_effort`.
+
 ## [0.3.0] - 2026-10-03
 
 ### Added
