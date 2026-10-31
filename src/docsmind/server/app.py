@@ -72,7 +72,7 @@ def create_app(config: DocsmindConfig | None = None) -> FastAPI:
     async def ui_spa_fallback(path: str):
         # `/api/*` and `/blobs/*` are mounted above; this handles the UI's
         # client-side routes (`/documents/...`, `/activity`, etc.).
-        if path.startswith("api/") or path == "api" or path.startswith("blobs/") or path == "blobs":
+        if path in {"api", "blobs"} or path.startswith(("api/", "blobs/")):
             raise HTTPException(status_code=404, detail="Not found")
 
         if not ui_index.exists():

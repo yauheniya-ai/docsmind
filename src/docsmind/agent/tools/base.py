@@ -48,7 +48,8 @@ class ToolContext:
 
 class Tool:
     name: ClassVar[str]
-    description: ClassVar[str]
+    description: ClassVar[str]  # written for the model
+    summary: ClassVar[str] = ""  # one plain sentence for people (shown in the UI)
     Args: ClassVar[type[BaseModel]]
 
     async def run(self, args: Any, ctx: ToolContext) -> ToolOutput:  # pragma: no cover
@@ -88,6 +89,11 @@ class ToolRegistry:
 
     def names(self) -> list[str]:
         return list(self._tools)
+
+    def info(self, names: tuple[str, ...] | list[str] | None = None) -> list[dict[str, str]]:
+        """Name and plain-language summary of each tool (in `names` order), for the UI."""
+        wanted = list(self._tools) if names is None else [n for n in names if n in self._tools]
+        return [{"name": n, "description": self._tools[n].summary} for n in wanted]
 
     def subset(self, names: tuple[str, ...] | list[str]) -> ToolRegistry:
         return ToolRegistry([t for n, t in self._tools.items() if n in names])

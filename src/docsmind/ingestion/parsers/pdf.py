@@ -24,6 +24,7 @@ What this does:
 from __future__ import annotations
 
 import io
+import logging
 import re
 
 import pymupdf as fitz  # `import fitz` still works but is deprecated upstream
@@ -42,6 +43,7 @@ from docsmind.domain.documents import (
 from docsmind.domain.ports import BlobStore
 from docsmind.ingestion.chunking.page import chunk_page_text, merge_small_chunks
 
+logger = logging.getLogger(__name__)
 
 # Applied only to TOC titles (not body text) to give a section a clean
 # numeric path like "4.2" instead of a synthetic one, when the PDF's own
@@ -509,6 +511,7 @@ class PDFParser:
                 )
 
             except Exception:
+                logger.debug("Skipping table %d: could not render it", table_index, exc_info=True)
                 continue
 
             phash = self._perceptual_hash(

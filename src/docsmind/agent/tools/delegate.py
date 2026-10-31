@@ -31,6 +31,7 @@ class DelegateArgs(BaseModel):
 
 class DelegateTool(Tool):
     name = "delegate"
+    summary = "Hands a self-contained task to a subagent that works in its own fresh context."
     description = (
         "Delegate a self-contained task to a subagent that works in its own fresh context and returns a "
         "short report with [S#] citations. Use for large or independent work; several delegate calls in "

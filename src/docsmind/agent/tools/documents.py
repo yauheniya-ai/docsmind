@@ -18,6 +18,7 @@ class ListDocumentsArgs(BaseModel):
 
 class ListDocumentsTool(Tool):
     name = "list_documents"
+    summary = "Lists the documents in the register with their collection, version and size."
     description = "List the documents in the register with their handles, collection, version label, page and word counts."
     Args = ListDocumentsArgs
 
@@ -31,6 +32,7 @@ class OutlineArgs(BaseModel):
 
 class OutlineTool(Tool):
     name = "get_outline"
+    summary = "Shows a document's table of contents with page numbers, to find where a topic is covered."
     description = (
         "The document's table of contents (from the PDF's own bookmarks) with page numbers. "
         "Use it to find which pages cover a topic, then read_pages."
@@ -67,6 +69,7 @@ class ReadPagesArgs(BaseModel):
 
 class ReadPagesTool(Tool):
     name = "read_pages"
+    summary = "Reads the full text of one page or a few consecutive pages of a document."
     description = (
         "Read the full text of one or a few consecutive pages of a document. Each chunk comes with a "
         "source handle to cite."

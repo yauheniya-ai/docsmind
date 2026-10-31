@@ -30,6 +30,7 @@ class SearchArgs(BaseModel):
 
 class SearchTool(Tool):
     name = "search"
+    summary = "Ranked keyword search across the documents. Returns the best matching passages to cite."
     description = (
         "Ranked keyword search over the documents' text. Returns the best matching passages, each "
         "with a source handle like [S1] to cite. Matches are stemmed and any of the words may match; "
@@ -84,6 +85,7 @@ class GrepArgs(BaseModel):
 
 class GrepTool(Tool):
     name = "grep"
+    summary = "Finds an exact phrase, clause number or identifier, ignoring case. No stemming."
     description = (
         "Find an exact phrase, clause number or identifier (case-insensitive, literal match, no stemming). "
         "Returns the pages containing it, each with a source handle to cite."

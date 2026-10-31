@@ -8,6 +8,12 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # Pin every `uv` call in the job to the matrix interpreter. Without this,
+      # `uv run` falls back to .python-version (3.12), discards the venv that
+      # `uv sync --all-extras` just built, and recreates it without the dev
+      # extra (so ruff/pytest are missing).
+      UV_PYTHON: ${{ matrix.python-version }}
     strategy:
       fail-fast: false
       matrix:

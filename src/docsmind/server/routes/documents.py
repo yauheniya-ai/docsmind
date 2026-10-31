@@ -115,7 +115,7 @@ async def create_document(
                     "existing_version": exc.existing_version,
                 },
             ) from exc
-        except Exception as exc:  # noqa: BLE001 - surface parser/db errors to the UI as-is
+        except Exception as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     repo = _repo(request)

@@ -136,8 +136,28 @@ class DocsmindAgent:
                     "with citations that are verified against what it actually read."
                 ),
                 "model": self.config.llm_model,
-                "tools": self.tools.names(),
+                "tools": self.tools.info(),
             },
+            "stages": [
+                {
+                    "name": "router",
+                    "role": "Routing",
+                    "description": (
+                        "Decides whether a question is simple or complex, and rewrites follow-ups into "
+                        "standalone questions. One quick model call, no tools."
+                    ),
+                    "model": fast,
+                },
+                {
+                    "name": "planner",
+                    "role": "Planning",
+                    "description": (
+                        "For complex questions, drafts a short step-by-step plan before the Mind starts "
+                        "working. One model call, no tools: a stage of the Mind, not a subagent."
+                    ),
+                    "model": fast,
+                },
+            ],
             "harness": {
                 "router_model": fast,
                 "summarizer_model": fast,
@@ -150,7 +170,7 @@ class DocsmindAgent:
                     "role": spec.role,
                     "description": spec.description,
                     "model": self.config.llm_model,
-                    "tools": list(spec.tools),
+                    "tools": self.tools.info(spec.tools),
                 }
                 for spec in SUBAGENTS.values()
             ],
