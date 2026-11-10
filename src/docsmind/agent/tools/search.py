@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from docsmind.agent.catalog import CatalogDoc
 from docsmind.agent.tools.base import Tool, ToolContext, ToolOutput
 from docsmind.domain.errors import ToolInputError
+from docsmind.retrieval.hybrid import hybrid_rows
 from docsmind.retrieval.keyword import build_tsquery, query_terms, snippet_around
 
 _DOCUMENTS_HELP = "Document handles to restrict to, e.g. [\"D1\", \"D3\"]. Omit to use all documents."
@@ -30,11 +31,15 @@ class SearchArgs(BaseModel):
 
 class SearchTool(Tool):
     name = "search"
-    summary = "Ranked keyword search across the documents. Returns the best matching passages to cite."
+    summary = (
+        "Searches the documents by keywords, and by meaning once they have been embedded. "
+        "Returns the best matching passages to cite."
+    )
     description = (
-        "Ranked keyword search over the documents' text. Returns the best matching passages, each "
-        "with a source handle like [S1] to cite. Matches are stemmed and any of the words may match; "
-        "use read_pages on a hit to see the surrounding text."
+        "Search the documents' text (and figure captions, if images were captioned). Matches by "
+        "stemmed keywords, plus by meaning when the documents have been embedded, so paraphrases can "
+        "match too. Returns the best passages, each with a source handle like [S1] to cite; use "
+        "read_pages on a hit to see the surrounding text."
     )
     Args = SearchArgs
 
@@ -46,8 +51,13 @@ class SearchTool(Tool):
         if tsquery is None:
             raise ToolInputError("The query has no searchable words. Use specific terms.")
 
-        rows = await ctx.repo.keyword_search(
-            tsquery, version_ids=[d.version_id for d in docs], limit=args.limit
+        rows, mode = await hybrid_rows(
+            ctx.repo,
+            ctx.embedder,
+            args.query,
+            tsquery,
+            version_ids=[d.version_id for d in docs],
+            limit=args.limit,
         )
         if not rows:
             return ToolOutput(
@@ -61,6 +71,8 @@ class SearchTool(Tool):
             if doc is None:  # defence in depth: never surface out-of-scope rows
                 continue
             snippet = snippet_around(row["content"], terms)
+            if row.get("chunk_type") == "image":
+                snippet = f"[Figure on this page, AI caption] {snippet}"
             citation = ctx.sources.add(
                 chunk_id=row["chunk_id"],
                 version_id=doc.version_id,
@@ -74,7 +86,7 @@ class SearchTool(Tool):
             passages.append(
                 format_passage(doc, citation.handle or "S?", row["page_start"], row["page_end"], snippet)
             )
-        return ToolOutput("\n\n".join(passages), summary=f"{len(passages)} passages")
+        return ToolOutput("\n\n".join(passages), summary=f"{len(passages)} passages ({mode})")
 
 
 class GrepArgs(BaseModel):

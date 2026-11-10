@@ -22,11 +22,14 @@ app.command("doctor")(doctor.doctor)
 # they're single actions, not command groups.
 from docsmind.cli import chat as _chat
 from docsmind.cli import diff as _diff
+from docsmind.cli import enrich as _enrich
 from docsmind.cli import inspect as _inspect
 from docsmind.cli import serve as _serve
 
 app.command("chat")(_chat.chat)
 app.command("diff")(_diff.diff)
+app.command("embed")(_enrich.embed)
+app.command("caption")(_enrich.caption)
 app.command("versions")(_inspect.versions)
 app.command("fulltext")(_inspect.fulltext)
 app.command("outline")(_inspect.outline)

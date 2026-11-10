@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-11-02
+
+### Changed
+
+- Agents view is now an interactive graph: the Mind in the centre, its tools around it, and the
+  subagents with their own tools beyond. Hover (or tap) a node for its description. Names are
+  shown as "Change Analyzer", not `change_analyzer`; the router and planner appear as dashed
+  stages of the Mind (one model call, no tools), not as subagents.
+- `GET /api/agent`: `tools` are now `{name, description}` objects (plain-language summaries),
+  and a new `stages` list describes the router and planner.
+
+### Added
+
+- On-demand enrichment for both pending roadmap items:
+  - Embeddings: estimate by token count, confirmation step, resumable run (`docsmind embed`,
+    `POST /api/enrichment/embeddings/{estimate,run}`).
+  - Image captioning: estimate by image count/resolution + output-token range, confirmation step,
+    resumable run (`docsmind caption`, `POST /api/enrichment/captions/{estimate,run}`).
+- Enrichment status + background jobs API:
+  `GET /api/enrichment/status`, `GET /api/enrichment/jobs/{job_id}`,
+  `POST /api/enrichment/jobs/{job_id}/cancel`.
+- Frontend Document details now shows "not embedded yet" / "not captioned yet" alerts with
+  estimate-and-proceed dialogs and job progress/cancel controls.
+- Hybrid retrieval path: keyword search fused with vector similarity when embeddings are present,
+  with automatic fallback to keyword-only when embeddings or API access are unavailable.
+
 ## [0.4.0] - 2026-10-31
 
 ### Added

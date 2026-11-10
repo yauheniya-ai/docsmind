@@ -34,7 +34,10 @@ class DocsmindConfig(BaseSettings):
     # quality cost if 3072-dim storage/index size becomes a concern — if you
     # do that, set this to match, since it drives the `vector(N)` column.
     embedding_dimensions: int = 3072
-    vision_provider: str = "anthropic"
+    vision_provider: str = "anthropic"  # anthropic | openai
+    # Model used to caption images. Unset = a small, cheap default per provider
+    # (claude-haiku-4-5 / gpt-4o-mini).
+    vision_model: str | None = None
 
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
@@ -63,6 +66,16 @@ class DocsmindConfig(BaseSettings):
     chunk_size_tokens: int = 700
     chunk_overlap_tokens: int = 100
     caption_image_min_bytes: int = 2_000  # skip captioning tiny icons/spacers
+
+    # --- on-demand enrichment (embeddings + image captions) ---
+    # Cost estimates use a built-in price table (USD per 1M tokens) that can go
+    # stale. Set these to override it for your models/contract; they only affect
+    # the estimate shown before you confirm, never what you are actually billed.
+    embedding_price_per_million: float | None = None
+    vision_input_price_per_million: float | None = None
+    vision_output_price_per_million: float | None = None
+    vision_max_output_tokens: int = 300  # cap per caption
+    embedding_batch_size: int = 64  # texts per embeddings request
 
     # --- tracing (optional) ---
     tracing_backend: str | None = None  # None | mlflow

@@ -278,3 +278,17 @@ def test_events_are_json_serialisable(config, llm, repo):
 
     for event in asyncio.run(go()):
         json.dumps(event.data, default=str)
+
+
+def test_describe_gives_the_ui_plain_tool_summaries_and_stages(config, llm, repo):
+    info = make_agent(config, llm, repo).describe()
+
+    mind_tools = {t["name"]: t["description"] for t in info["agent"]["tools"]}
+    assert "delegate" in mind_tools
+    assert all(mind_tools.values())  # every tool has a human-readable summary
+
+    for sub in info["subagents"]:
+        assert "delegate" not in [t["name"] for t in sub["tools"]]
+        assert all(t["description"] for t in sub["tools"])
+
+    assert [s["name"] for s in info["stages"]] == ["router", "planner"]

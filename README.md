@@ -28,8 +28,8 @@ will perform specialized tasks.
 | ✅ Table extraction | Extract and store tables skipping repeating ones (e.g. headers or footers) |
 | ✅ server + UI | FastAPI backend (`docsmind serve`) + React UI (`frontend/`): add documents, browse indexed content, image and table galleries |
 | ✅ Chat agent (the Mind) | Routes each question, plans complex ones, searches/reads your documents with tools, delegates to subagents, and answers with verified `[S#]` citations. Streams to the UI over SSE; conversations are saved |
-| 🚧 Image captioning | Images are extracted and stored; vision captioning is next |
-| 🚧 Embeddings + hybrid search | Chunks are stored without embeddings for now |
+| ✅ Image captioning (on demand) | The UI/CLI shows what's uncaptioned, estimates cost from image count/resolution, asks for confirmation, then captions only what's missing |
+| ✅ Embeddings + hybrid search (on demand) | The UI/CLI shows what's unembedded, estimates cost from token counts, asks for confirmation, then embeds only what's missing; search uses keyword+semantic fusion when available |
 | 🚧 Change analysis (diffra) | `docsmind diff` exists as a command, without an implementation yet |
 | 🚧 DOCX/text parsers, S3/Supabase blob storage | Planned |
 
@@ -169,7 +169,30 @@ Question -> Orchestrator --simple--> Executor <-> Tools / Subagents -> Answer
 - **Citations**: tools register passages as `S1, S2, ...`; the model cites `[S#]`; invented
   handles are dropped and the rest renumbered by first appearance. Document text is treated as
   untrusted data, never as instructions.
-- **Search** is Postgres full-text (ranked) plus exact-text grep until embeddings land.
+- **Search** is Postgres full-text (ranked) plus exact-text grep; when embeddings exist, semantic vector matches are fused in via reciprocal rank fusion.
+
+### On-demand enrichment
+
+Embeddings and image captions are **not** created during ingest. They are opt-in because they call paid APIs.
+
+- In the **Document details** page, warning cards show what's missing ("not embedded yet" / "not captioned yet").
+- Clicking **Estimate & run** opens a confirmation dialog with model, token/image counts, and estimated USD cost.
+- Running is idempotent and resumable: it only processes missing rows; cancel/retry is safe.
+
+From CLI:
+
+```bash
+docsmind embed [--version-id <id>] [-y]
+docsmind caption [--version-id <id>] [-y]
+```
+
+HTTP:
+
+- `GET /api/enrichment/status`
+- `POST /api/enrichment/{embeddings|captions}/estimate`
+- `POST /api/enrichment/{embeddings|captions}/run`
+- `GET /api/enrichment/jobs/{job_id}`
+- `POST /api/enrichment/jobs/{job_id}/cancel`
 
 Tuning (all `DOCSMIND_*`): `AGENT_FAST_MODEL` (router/summarizer/memory model, defaults to
 `LLM_MODEL`), `AGENT_MAX_STEPS`, `AGENT_SUBAGENT_MAX_STEPS`, `AGENT_MEMORY_ENABLED`,
@@ -212,6 +235,8 @@ heuristics that work on one PDF break on the next.
 | `docsmind doctor` | Check your setup |
 | `docsmind serve [--host] [--port] [--reload]` | Run the FastAPI backend for the `frontend/` UI |
 | `docsmind chat [question] [-c <collection>]` | Ask the Mind once, or start a REPL that keeps the conversation |
+| `docsmind embed [--version-id <id>] [-y]` | Estimate cost and create missing embeddings on demand |
+| `docsmind caption [--version-id <id>] [-y]` | Estimate cost and create missing image captions on demand |
 | `docsmind diff` | Planned |
 
 ## Architecture

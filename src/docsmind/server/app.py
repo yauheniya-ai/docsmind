@@ -36,10 +36,11 @@ def create_app(config: DocsmindConfig | None = None) -> FastAPI:
 
     app.state.config = config
 
-    from docsmind.server.routes import chat, documents
+    from docsmind.server.routes import chat, documents, enrichment
 
     app.include_router(documents.router, prefix="/api")
     app.include_router(chat.router, prefix="/api")
+    app.include_router(enrichment.router, prefix="/api")
 
     # Extracted images/tables are rendered to disk under `blob_root` (see
     # `FilesystemBlobStore`) — serve them directly so the UI can <img src=...>

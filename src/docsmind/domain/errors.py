@@ -12,6 +12,15 @@ class LLMConfigurationError(Exception):
     installed, unknown provider). The message says exactly what to fix."""
 
 
+class EnrichmentError(Exception):
+    """Embedding or captioning could not run (message is safe to show)."""
+
+
+class EnrichmentConfigurationError(EnrichmentError):
+    """The embedding/vision provider can't be used (missing API key, SDK not
+    installed, unknown provider). The message says exactly what to fix."""
+
+
 class AgentError(Exception):
     """The Mind could not produce an answer (message is safe to show)."""
 

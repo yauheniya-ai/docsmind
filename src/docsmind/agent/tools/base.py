@@ -44,6 +44,7 @@ class ToolContext:
     config: DocsmindConfig
     emit: Emit
     delegate: DelegateFn | None = None  # None for subagents: no recursion
+    embedder: Any = None  # query embedder for semantic search; None = keyword search only
 
 
 class Tool:

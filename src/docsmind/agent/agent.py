@@ -72,6 +72,7 @@ class DocsmindAgent:
         self._repo = repository
         self._conversations = conversations
         self._memory = memory
+        self._query_embedder = None
         self.tools = tools or build_registry()
         self.builder = ContextBuilder(config)
         self._background: set[asyncio.Task] = set()
@@ -104,6 +105,19 @@ class DocsmindAgent:
 
             self._repo = PostgresRepository(self.config)
         return self._repo
+
+    @property
+    def query_embedder(self):
+        if self._query_embedder is None:
+            try:
+                from docsmind.adapters.embeddings import create_embedder
+                from docsmind.domain.errors import EnrichmentConfigurationError
+
+                self._query_embedder = create_embedder(self.config)
+            except (EnrichmentConfigurationError, ImportError):
+                # Search still works without embeddings (keyword-only fallback).
+                self._query_embedder = False
+        return None if self._query_embedder is False else self._query_embedder
 
     @property
     def conversations(self) -> ConversationStore:
@@ -338,6 +352,7 @@ class DocsmindAgent:
             config=self.config,
             emit=emit,
             delegate=self._make_delegate(llm, catalog, sources, usage, emit),
+            embedder=self.query_embedder,
         )
         bundle = self.builder.executor(state, self.tools.specs())
         result = await run_tool_loop(
@@ -416,6 +431,7 @@ class DocsmindAgent:
                 config=self.config,
                 emit=emit,
                 delegate=None,  # no recursion
+                embedder=self.query_embedder,
             )
             registry = self.tools.subset(spec.tools)
             bundle = self.builder.subagent(spec, task, sub_catalog, registry.specs())

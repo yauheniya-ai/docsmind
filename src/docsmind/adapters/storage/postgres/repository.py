@@ -205,21 +205,38 @@ class PostgresRepository:
         chunk_types: list[str] | None = None,
         limit: int = 10,
     ) -> list[Chunk]:
-        # TODO: reciprocal rank fusion of a vector KNN query and a
-        # plainto_tsquery match against `chunks.tsv`, per the design from
-        # earlier in this conversation. Not implemented yet — this is the
-        # next piece after captioning/embedding actually populate `embedding`.
-        raise NotImplementedError(
-            "hybrid_search isn't wired up yet — chunks currently have no "
-            "embeddings to search over. See adapters/embeddings/ (not yet "
-            "built) and enrichment/caption.py (not yet built)."
+        """Keyword (full-text) and vector (cosine) results fused with
+        reciprocal rank fusion. Falls back to whichever leg has results."""
+        from docsmind.domain.documents import ChunkType
+        from docsmind.retrieval.fusion import reciprocal_rank_fusion
+        from docsmind.retrieval.keyword import build_tsquery
+
+        pool = max(limit * 3, 20)
+        tsquery = build_tsquery(query)
+        keyword = (
+            await self.keyword_search(tsquery, version_ids=version_ids, limit=pool) if tsquery else []
         )
+        vector = await self.vector_search(query_embedding, version_ids=version_ids, limit=pool)
+        fused = reciprocal_rank_fusion([keyword, vector], limit=limit * 3 if chunk_types else limit)
+        if chunk_types:
+            fused = [r for r in fused if r.get("chunk_type", "text") in chunk_types][:limit]
+        return [
+            Chunk(
+                id=r["chunk_id"],
+                version_id=r["version_id"],
+                chunk_type=ChunkType(r.get("chunk_type", "text")),
+                content=r["content"],
+                page_start=r["page_start"],
+                page_end=r["page_end"],
+            )
+            for r in fused
+        ]
 
     # -- agent retrieval ------------------------------------------------------
-    # Read-only queries the Mind's tools run. Keyword (Postgres full-text)
-    # search only for now: chunks don't have embeddings yet, so `hybrid_search`
-    # above is still a stub. When embeddings land, add the vector leg here and
-    # fuse it with this one — the tools call these methods, not SQL.
+    # Read-only queries the Mind's tools run: keyword (Postgres full-text) and,
+    # once chunks have embeddings (see `enrichment/`), vector search. Fusion of
+    # the two lives in `retrieval/fusion.py`; the tools call these methods,
+    # not SQL.
 
     async def list_catalog(self, version_ids: list[UUID] | None = None) -> list[dict]:
         """One row per version (optionally restricted), with the page count
@@ -260,7 +277,7 @@ class PostgresRepository:
 
     _SEARCH_SQL = text(
         """
-        SELECT c.id AS chunk_id, c.version_id, c.page_start, c.page_end, c.content,
+        SELECT c.id AS chunk_id, c.version_id, c.page_start, c.page_end, c.content, c.chunk_type,
                ts_rank_cd(c.tsv, q.query, 32) AS rank
         FROM chunks c, to_tsquery('english', :query) AS q(query)
         WHERE c.tsv @@ q.query
@@ -329,6 +346,185 @@ class PostgresRepository:
         async with self._sessionmaker() as session:
             result = await session.execute(stmt)
             return [dict(row) for row in result.mappings().all()]
+
+    # -- vector search + on-demand enrichment ---------------------------------
+    # Embeddings and image captions are created on demand (`enrichment/`), so
+    # every read here has to cope with "nothing embedded yet".
+
+    _STATUS_SQL = text(
+        """
+        SELECT v.id AS version_id,
+          (SELECT count(*) FROM chunks c
+            WHERE c.version_id = v.id AND c.content <> '') AS chunks_total,
+          (SELECT count(*) FROM chunks c
+            WHERE c.version_id = v.id AND c.content <> ''
+              AND c.embedding IS NOT NULL AND c.embedding_model = :model) AS chunks_embedded,
+          (SELECT count(*) FROM images i WHERE i.version_id = v.id) AS images_total,
+          (SELECT count(*) FROM images i
+            WHERE i.version_id = v.id AND i.caption IS NOT NULL) AS images_captioned
+        FROM document_versions v
+        WHERE CAST(:filter_versions AS boolean) IS FALSE OR v.id = ANY(:version_ids)
+        """
+    ).bindparams(bindparam("version_ids", type_=ARRAY(PGUUID(as_uuid=True))))
+
+    async def enrichment_status(self, model: str, version_ids: list[UUID] | None = None) -> list[dict]:
+        """Per-version counts: embeddable chunks (non-empty text) and how many
+        already carry an embedding from `model`; images and how many have a
+        caption (an empty caption means "looked at, nothing worth saying")."""
+        async with self._sessionmaker() as session:
+            result = await session.execute(
+                self._STATUS_SQL,
+                {"model": model, "filter_versions": version_ids is not None, "version_ids": version_ids or []},
+            )
+            return [dict(row) for row in result.mappings().all()]
+
+    _TO_EMBED_SQL = text(
+        """
+        SELECT c.id, c.content
+        FROM chunks c
+        WHERE c.content <> ''
+          AND (c.embedding IS NULL OR c.embedding_model IS DISTINCT FROM :model)
+          AND (CAST(:filter_versions AS boolean) IS FALSE OR c.version_id = ANY(:version_ids))
+          AND (CAST(:after AS uuid) IS NULL OR c.id > CAST(:after AS uuid))
+        ORDER BY c.id
+        LIMIT :limit
+        """
+    ).bindparams(
+        bindparam("version_ids", type_=ARRAY(PGUUID(as_uuid=True))),
+        bindparam("after", type_=PGUUID(as_uuid=True)),
+    )
+
+    async def fetch_chunks_to_embed(
+        self,
+        model: str,
+        *,
+        version_ids: list[UUID] | None = None,
+        after_id: UUID | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Chunks that still need an embedding from `model`, ordered by id.
+        Pass the last id as `after_id` to page through without writing; when
+        writing as you go, just ask for the first page again each time."""
+        async with self._sessionmaker() as session:
+            result = await session.execute(
+                self._TO_EMBED_SQL,
+                {
+                    "model": model,
+                    "filter_versions": version_ids is not None,
+                    "version_ids": version_ids or [],
+                    "after": after_id,
+                    "limit": limit,
+                },
+            )
+            return [dict(row) for row in result.mappings().all()]
+
+    async def save_embeddings(self, items: list[tuple[UUID, list[float]]], model: str) -> None:
+        if not items:
+            return
+        stmt = (
+            chunks_table.update()
+            .where(chunks_table.c.id == bindparam("b_id"))
+            .values(embedding=bindparam("b_embedding"), embedding_model=bindparam("b_model"))
+        )
+        async with self._sessionmaker() as session:
+            await session.execute(
+                stmt, [{"b_id": cid, "b_embedding": vec, "b_model": model} for cid, vec in items]
+            )
+            await session.commit()
+
+    async def count_embedded(self, model: str, version_ids: list[UUID] | None = None) -> int:
+        stmt = select(func.count()).select_from(chunks_table).where(
+            chunks_table.c.embedding.is_not(None), chunks_table.c.embedding_model == model
+        )
+        if version_ids is not None:
+            stmt = stmt.where(chunks_table.c.version_id.in_(version_ids))
+        async with self._sessionmaker() as session:
+            return int((await session.execute(stmt)).scalar_one())
+
+    async def vector_search(
+        self,
+        embedding: list[float],
+        *,
+        model: str | None = None,
+        version_ids: list[UUID] | None = None,
+        limit: int = 10,
+    ) -> list[dict]:
+        """Nearest chunks by cosine distance, same row shape as `keyword_search`.
+
+        Queries `embedding::halfvec(N)` because that is what the HNSW index is
+        built on (migration 0001) — pgvector indexes cap at 2000 dimensions
+        for `vector` but 4000 for `halfvec`.
+        """
+        dims = int(self.config.embedding_dimensions)
+        literal = "[" + ",".join(f"{x:.7g}" for x in embedding) + "]"
+        sql = text(
+            f"""
+            SELECT c.id AS chunk_id, c.version_id, c.page_start, c.page_end, c.content, c.chunk_type,
+                   (c.embedding::halfvec({dims}) <=> CAST(:q AS halfvec({dims}))) AS distance
+            FROM chunks c
+            WHERE c.embedding IS NOT NULL
+              AND (CAST(:model AS text) IS NULL OR c.embedding_model = CAST(:model AS text))
+              AND (CAST(:filter_versions AS boolean) IS FALSE OR c.version_id = ANY(:version_ids))
+            ORDER BY c.embedding::halfvec({dims}) <=> CAST(:q AS halfvec({dims}))
+            LIMIT :limit
+            """
+        ).bindparams(bindparam("version_ids", type_=ARRAY(PGUUID(as_uuid=True))))
+        async with self._sessionmaker() as session:
+            result = await session.execute(
+                sql,
+                {
+                    "q": literal,
+                    "model": model,
+                    "filter_versions": version_ids is not None,
+                    "version_ids": version_ids or [],
+                    "limit": limit,
+                },
+            )
+            return [dict(row) for row in result.mappings().all()]
+
+    async def fetch_images_to_caption(
+        self, *, version_ids: list[UUID] | None = None, after_id: UUID | None = None, limit: int = 200
+    ) -> list[dict]:
+        stmt = (
+            select(
+                images_table.c.id,
+                images_table.c.version_id,
+                images_table.c.page_number,
+                images_table.c.uri,
+                images_table.c.width,
+                images_table.c.height,
+                images_table.c.format,
+            )
+            .where(images_table.c.caption.is_(None))
+            .order_by(images_table.c.id)
+            .limit(limit)
+        )
+        if version_ids is not None:
+            stmt = stmt.where(images_table.c.version_id.in_(version_ids))
+        if after_id is not None:
+            stmt = stmt.where(images_table.c.id > after_id)
+        async with self._sessionmaker() as session:
+            result = await session.execute(stmt)
+            return [dict(row) for row in result.mappings().all()]
+
+    async def save_caption(self, image_id: UUID, caption: str, model: str) -> None:
+        """Record a caption and make it searchable: the image's chunk gets the
+        caption as its content (the generated `tsv` follows) and loses any old
+        embedding so the next embed run picks it up. An empty caption just
+        marks the image as handled (too small, or decorative)."""
+        async with self._sessionmaker() as session:
+            await session.execute(
+                images_table.update()
+                .where(images_table.c.id == image_id)
+                .values(caption=caption, caption_model=model, captioned_at=func.now())
+            )
+            if caption:
+                await session.execute(
+                    chunks_table.update()
+                    .where(chunks_table.c.image_id == image_id, chunks_table.c.chunk_type == "image")
+                    .values(content=caption, embedding=None, embedding_model=None)
+                )
+            await session.commit()
 
     # -- read helpers, mainly for sanity-checking what actually landed -------
 
