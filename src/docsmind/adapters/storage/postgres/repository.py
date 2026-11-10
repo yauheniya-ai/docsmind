@@ -12,9 +12,10 @@ part of what it does, not the whole of it.
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
-from sqlalchemy import bindparam, delete, func, insert, select, text
+from sqlalchemy import Text, bindparam, cast, delete, func, insert, select, text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
@@ -45,6 +46,9 @@ from docsmind.domain.documents import (
     DocumentVersion,
     ParsedDocument,
 )
+
+# How many leading vector components `get_chunks` returns as a preview.
+_EMBEDDING_PREVIEW_DIMS = 16
 
 
 class PostgresRepository:
@@ -661,7 +665,11 @@ class PostgresRepository:
     async def get_chunks(self, version_id: UUID, *, page: int | None = None) -> list[dict]:
         """Chunks for one version, in page order. Pass `page` to see only
         one page's chunk(s) — most pages are exactly one chunk; a dense page
-        may be several."""
+        may be several.
+
+        Embedded chunks also carry `embedding_model`, `embedding_dims` and a
+        short `embedding_preview` (the first few components); the full vector
+        is served by `get_chunk_embedding`, so listing stays small."""
         async with self._sessionmaker() as session:
             stmt = (
                 select(
@@ -671,6 +679,9 @@ class PostgresRepository:
                     chunks_table.c.image_id,
                     chunks_table.c.page_start,
                     chunks_table.c.page_end,
+                    chunks_table.c.embedding_model,
+                    # pgvector's text form ("[0.1,0.2,...]") is valid JSON.
+                    cast(chunks_table.c.embedding, Text).label("embedding_text"),
                 )
                 .where(chunks_table.c.version_id == version_id)
                 .order_by(chunks_table.c.page_start)
@@ -678,7 +689,28 @@ class PostgresRepository:
             if page is not None:
                 stmt = stmt.where(chunks_table.c.page_start == page)
             result = await session.execute(stmt)
-            return [dict(row) for row in result.mappings().all()]
+            rows = []
+            for row in result.mappings().all():
+                item = dict(row)
+                raw = item.pop("embedding_text")
+                if raw is None:
+                    item["embedding_dims"] = None
+                    item["embedding_preview"] = None
+                else:
+                    vector = json.loads(raw)
+                    item["embedding_dims"] = len(vector)
+                    item["embedding_preview"] = vector[:_EMBEDDING_PREVIEW_DIMS]
+                rows.append(item)
+            return rows
+
+    async def get_chunk_embedding(self, version_id: UUID, chunk_id: UUID) -> list[float] | None:
+        """The full embedding vector of one chunk, or None if it has none."""
+        async with self._sessionmaker() as session:
+            stmt = select(cast(chunks_table.c.embedding, Text)).where(
+                chunks_table.c.version_id == version_id, chunks_table.c.id == chunk_id
+            )
+            raw = (await session.execute(stmt)).scalar_one_or_none()
+            return None if raw is None else json.loads(raw)
 
     async def get_images(self, version_id: UUID) -> list[dict]:
         """Saved images for one version, in page order — `uri` is a

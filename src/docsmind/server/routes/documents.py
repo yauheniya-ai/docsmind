@@ -178,6 +178,16 @@ async def get_chunks(request: Request, version_id: UUID, page: int | None = None
     return await repo.get_chunks(version_id, page=page)
 
 
+@router.get("/documents/{version_id}/chunks/{chunk_id}/embedding")
+async def get_chunk_embedding(request: Request, version_id: UUID, chunk_id: UUID) -> dict:
+    """The full embedding vector of one chunk (the chunk list only carries a preview)."""
+    repo = _repo(request)
+    vector = await repo.get_chunk_embedding(version_id, chunk_id)
+    if vector is None:
+        raise HTTPException(status_code=404, detail="This chunk has no embedding.")
+    return {"dims": len(vector), "embedding": vector}
+
+
 @router.get("/documents/{version_id}/images")
 async def get_images(request: Request, version_id: UUID) -> list[dict]:
     repo = _repo(request)
