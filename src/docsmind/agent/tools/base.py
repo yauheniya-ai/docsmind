@@ -91,10 +91,23 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self._tools)
 
-    def info(self, names: tuple[str, ...] | list[str] | None = None) -> list[dict[str, str]]:
-        """Name and plain-language summary of each tool (in `names` order), for the UI."""
+    def info(self, names: tuple[str, ...] | list[str] | None = None) -> list[dict[str, Any]]:
+        """Each tool (in `names` order) for the UI: a plain-language summary, plus
+        exactly what the model sees (its description and JSON Schema arguments)."""
         wanted = list(self._tools) if names is None else [n for n in names if n in self._tools]
-        return [{"name": n, "description": self._tools[n].summary} for n in wanted]
+        out: list[dict[str, Any]] = []
+        for n in wanted:
+            tool = self._tools[n]
+            spec = tool.spec()
+            out.append(
+                {
+                    "name": n,
+                    "description": tool.summary,
+                    "instructions": spec.description,
+                    "parameters": spec.parameters,
+                }
+            )
+        return out
 
     def subset(self, names: tuple[str, ...] | list[str]) -> ToolRegistry:
         return ToolRegistry([t for n, t in self._tools.items() if n in names])

@@ -1,0 +1,66 @@
+%%{init: {
+  "flowchart": {
+    "wrappingWidth": 400
+  },
+  "themeVariables": {
+    "fontFamily": "Plus Jakarta Sans",
+    "lineColor": "#626d84",
+    "clusterBkg": "#faf8f5",
+    "clusterBorder": "#e5e2dc"
+  }
+}}%%
+flowchart TB
+    subgraph LEGEND["Status"]
+        direction LR
+        L1["Implemented"]
+        L2["Partial"]
+        L3["Planned"]
+    end
+
+    U["User / App<br/>goal or request"]
+    EV["8 · Evals<br/>golden sets, trajectory vs outcome,<br/>LLM-as-judge, regression tests"]
+
+    subgraph H["1 · Harness Engineering: full, safe, observable stack"]
+        G["7 · Guardrails & Permissions<br/>read-only tools, untrusted-data rule, verified citations;<br/>still missing: I/O filtering, scoped access"]
+
+        subgraph CORE["Agent core"]
+            C["3 · Context Engineering<br/>instructions, data, history,<br/>retrieval, compression"]
+            A["2 · Loop Engineering<br/>think, plan, act, evaluate<br/>stop rules, max iterations"]
+            C --> A
+        end
+
+        T["4 · Tool Design<br/>clear names, strict schemas,<br/>helpful errors, fewer tools"]
+        M["5 · Memory<br/>short-term, long-term, semantic<br/>retrieve and write"]
+        O["6 · Orchestration<br/>router/orchestrator, handoffs,<br/>parallel vs sequential"]
+        HITL["9 · Human-in-the-Loop<br/>approval gates, feedback,<br/>spot checks"]
+        OBS["10 · Observability & Tracing<br/>live activity trace and saved conversations;<br/>missing: pluggable tracing (MLflow, Langfuse),<br/> metrics, alerts"]
+    end
+
+    U --> G --> C
+    A <-->|"tool calls / results"| T
+    A <-->|"store / retrieve"| M
+    M -->|"relevant context"| C
+    A <-->|"delegate / aggregate"| O
+    A -->|"high-impact actions"| HITL
+    HITL -->|"approve / correct"| A
+    A -.->|"telemetry"| OBS
+    OBS -.->|"find issues, improve"| A
+    EV -.->|"test before shipping"| A
+    A -->|"final response"| U
+
+    %% Palette from frontend/src/index.css
+    %%   implemented = --primary (navy), partial = --accent (terracotta),
+    %%   planned = --secondary / --muted-foreground (dashed)
+    classDef done fill:#1e2b3e,stroke:#1e2b3e,color:#faf8f5
+    classDef partial fill:#d04725,stroke:#d04725,color:#ffffff
+    classDef planned fill:#eeece8,stroke:#626d84,color:#626d84,stroke-dasharray:5 4
+    classDef actor fill:#ffffff,stroke:#e5e2dc,color:#1b2232
+
+    class C,A,T,M,O,L1 done
+    class G,OBS,L2 partial
+    class HITL,EV,L3 planned
+    class U actor
+
+    style H fill:#faf8f5,stroke:#e5e2dc,color:#1b2232
+    style CORE fill:#ffffff,stroke:#e5e2dc,color:#1b2232
+    style LEGEND fill:#ffffff,stroke:#e5e2dc,color:#626d84

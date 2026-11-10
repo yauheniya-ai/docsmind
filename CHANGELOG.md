@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-11-10
+
+### Added
+
+- Workspace: clicking a source card or citation chip opens the cited PDF page in a side panel
+  next to the chat.
+- Images/Tables galleries: full-view lightbox (blurred backdrop, arrow-key navigation) with
+  the full image caption beneath.
+- Chunk preview shows the embedding vector on one truncated line, expandable to the full
+  vector (`GET /api/documents/{version_id}/chunks/{chunk_id}/embedding`; chunk list now
+  includes `embedding_model`, `embedding_dims`, `embedding_preview`).
+- Agents: clicking a node opens a details panel next to the graph, like the source panel in the
+  Workspace. For an agent (the Mind, subagents, router and planner) it shows the description,
+  model, step budget, tools, the full system prompt (formatted or raw, with copy), the context
+  blocks the harness adds and a description of the user prompt. For a tool it shows the
+  description the model reads, which agents can use it and its arguments (type, required,
+  default, constraints) with the JSON Schema. Tool chips and "Available to" chips navigate
+  between panels; Escape or clicking the empty graph closes it.
+
+### Changed
+
+- `GET /api/agent`: every agent and stage now includes `system_prompt`, `context` (blocks with
+  `label`, `text`, `cached`) and `user_prompt`; every tool now includes `instructions` (the
+  description sent to the model) and `parameters` (its JSON Schema), in addition to `name` and
+  `description`.
+
+### Fixed
+
+- Image captions are now shown in the gallery and refresh when a captioning job finishes.
+- Captioning prompt no longer marks logos and banners as "decorative".
+
 ## [0.5.0] - 2026-11-02
 
 ### Changed

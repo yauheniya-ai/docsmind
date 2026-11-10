@@ -19,6 +19,7 @@ import time
 from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
+from docsmind.agent import prompts
 from docsmind.agent.catalog import Catalog
 from docsmind.agent.harness.context import ContextBuilder, TurnState
 from docsmind.agent.harness.memory import RECALL_LIMIT, MemoryWriter
@@ -140,10 +141,46 @@ class DocsmindAgent:
     def describe(self) -> dict:
         """Static description of the agent and its subagents, for the UI."""
         fast = self.config.agent_fast_model or self.config.llm_model
+        register = {
+            "label": "Document register",
+            "text": "The register (documents you may use):\n<one line per document: handle, title, pages, words ...>",
+            "cached": True,
+        }
+        memory = {
+            "label": "Memory",
+            "text": (
+                "<memory>\nNotes kept from earlier conversations. They can be outdated or wrong; "
+                "verify against the documents before relying on them.\n- <note> ...\n</memory>"
+            ),
+            "cached": False,
+        }
+        summary = {
+            "label": "Conversation summary",
+            "text": "<conversation_summary>\n<running summary of older turns>\n</conversation_summary>",
+            "cached": False,
+        }
+        interpreted = {
+            "label": "Interpreted question",
+            "text": "<interpreted_question>\n<the router's standalone rewrite>\n</interpreted_question>",
+            "cached": False,
+        }
+        plan = {
+            "label": "Plan",
+            "text": (
+                "<plan>\nFollow this plan; adapt it if the evidence demands.\n1. <step> ...\n</plan>"
+            ),
+            "cached": False,
+        }
         return {
             "agent": {
                 "name": "Mind",
                 "role": "Orchestrator",
+                "system_prompt": prompts.EXECUTOR,
+                "context": [register, memory, summary, interpreted, plan],
+                "user_prompt": (
+                    "The user's latest message, sent after the recent conversation history "
+                    "(older turns are folded into the summary above)."
+                ),
                 "description": (
                     "The main chat agent. Routes each question, plans the complex ones, searches and reads "
                     "your documents with tools, delegates large or parallel work to subagents, and answers "
@@ -156,6 +193,9 @@ class DocsmindAgent:
                 {
                     "name": "router",
                     "role": "Routing",
+                    "system_prompt": prompts.ROUTER,
+                    "context": [register, memory, summary],
+                    "user_prompt": "The user's latest message, after the last two exchanges of history.",
                     "description": (
                         "Decides whether a question is simple or complex, and rewrites follow-ups into "
                         "standalone questions. One quick model call, no tools."
@@ -165,6 +205,9 @@ class DocsmindAgent:
                 {
                     "name": "planner",
                     "role": "Planning",
+                    "system_prompt": prompts.PLANNER,
+                    "context": [register, memory, summary, interpreted],
+                    "user_prompt": "The standalone question produced by the router.",
                     "description": (
                         "For complex questions, drafts a short step-by-step plan before the Mind starts "
                         "working. One model call, no tools: a stage of the Mind, not a subagent."
@@ -182,6 +225,12 @@ class DocsmindAgent:
                 {
                     "name": spec.name,
                     "role": spec.role,
+                    "system_prompt": spec.prompt,
+                    "context": [register],
+                    "user_prompt": (
+                        "The `task` the Mind wrote in its `delegate` call. A fresh context: no history, "
+                        "memory or plan."
+                    ),
                     "description": spec.description,
                     "model": self.config.llm_model,
                     "tools": self.tools.info(spec.tools),

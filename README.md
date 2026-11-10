@@ -42,7 +42,7 @@ pip install "docsmind[all]"
 ```
 
 Extras: `docsmind[openai]`, `docsmind[anthropic]`, `docsmind[server]` (FastAPI, serves the bundled UI),
-`docsmind[mlflow]` (tracing/eval export). Requires Python 3.10+.
+`docsmind[mlflow]` / `docsmind[langfuse]` (tracing/eval export, planned). Requires Python 3.10+.
 
 ## Quickstart
 
@@ -287,7 +287,7 @@ over `/api/*`, and loads extracted images/tables straight from disk via `/blobs/
 ### Design notes
 
 - **Ports and adapters, once.** `domain/ports.py` defines every external dependency as a
-  `Protocol`. The core never imports `openai`, `anthropic` or `mlflow` directly. Only
+  `Protocol`. The core never imports `openai`, `anthropic`, `mlflow` or `langfuse` directly. Only
   adapters do, and lazily, so a bare `pip install docsmind` doesn't pull in SDKs you're
   not using.
 - **Text and images share one retrieval path.** An image becomes a chunk

@@ -78,7 +78,7 @@ class DocsmindConfig(BaseSettings):
     embedding_batch_size: int = 64  # texts per embeddings request
 
     # --- tracing (optional) ---
-    tracing_backend: str | None = None  # None | mlflow
+    tracing_backend: str | None = None  # None | mlflow | langfuse
 
     def is_managed_postgres(self) -> bool:
         return any(h in self.database_url for h in ("neon.tech", "supabase.co"))
