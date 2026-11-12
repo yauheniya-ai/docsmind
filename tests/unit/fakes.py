@@ -17,7 +17,12 @@ class ScriptedLLM:
         "You are the router": "router",
         "You are the planner": "planner",
         "You are the Mind": "executor",
-        "You are a subagent": "subagent",
+        "You are the version checker": "decider",
+        "You are the scanner": "scanner",
+        "You are the changelog finder": "finder",
+        "You match the entries": "matcher",
+        "You are the verifier": "verifier",
+        "You write the findings": "reporter",
         "You decide what a document assistant should remember": "memory",
         "You maintain the running summary": "summarizer",
     }
@@ -140,3 +145,7 @@ class FakeRepo:
             {"path": "01.01", "number": "1.1", "heading": "Scope", "page_start": 1, "ordinal": 1},
             {"path": "02", "number": "2", "heading": "Retention periods", "page_start": 2, "ordinal": 2},
         ]
+
+    async def get_full_text(self, version_id):
+        pages = sorted((p, r["content"]) for (v, p), r in self.pages.items() if v == version_id)
+        return "\n".join(content for _, content in pages) or None

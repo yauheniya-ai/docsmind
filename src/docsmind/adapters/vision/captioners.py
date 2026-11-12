@@ -21,6 +21,13 @@ CAPTION_PROMPT = (
 )
 
 
+READ_PROMPT = (
+    "These are images of document pages. Answer the question about them. Transcribe the relevant text "
+    "exactly as written, keeping numbers, units and table structure (as plain text rows). Say plainly when "
+    "the text asked about is not on the page; never guess."
+)
+
+
 def _clean(caption: str) -> str:
     return " ".join(caption.split())
 
@@ -71,6 +78,21 @@ class OpenAICaptioner:
         response = await self._client.chat.completions.create(**kwargs)
         return _clean(response.choices[0].message.content or "")
 
+    async def read(self, images: list[bytes], *, question: str, mime_type: str, max_tokens: int) -> str:
+        content: list[dict] = [{"type": "text", "text": f"{READ_PROMPT}\n\n{question}"}]
+        for image in images:
+            data = base64.b64encode(image).decode("ascii")
+            content.append({"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{data}"}})
+        kwargs: dict = {
+            "model": self.model_name,
+            "max_completion_tokens": max_tokens,
+            "messages": [{"role": "user", "content": content}],
+        }
+        if self._reasoning_effort:
+            kwargs["reasoning_effort"] = self._reasoning_effort
+        response = await self._client.chat.completions.create(**kwargs)
+        return (response.choices[0].message.content or "").strip()
+
 
 class AnthropicCaptioner:
     def __init__(
@@ -78,6 +100,7 @@ class AnthropicCaptioner:
         *,
         api_key: str | None,
         model: str,
+        base_url: str | None = None,
         max_output_tokens: int = 300,
         timeout: float = 120.0,
     ) -> None:
@@ -94,7 +117,7 @@ class AnthropicCaptioner:
             ) from exc
         self.model_name = model
         self._max_output_tokens = max_output_tokens
-        self._client = AsyncAnthropic(api_key=api_key, max_retries=4, timeout=timeout)
+        self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, max_retries=4, timeout=timeout)
 
     async def caption(self, image_bytes: bytes, *, mime_type: str) -> str:
         data = base64.b64encode(image_bytes).decode("ascii")
@@ -112,3 +135,16 @@ class AnthropicCaptioner:
             ],
         )
         return _clean("".join(b.text for b in response.content if getattr(b, "type", "") == "text"))
+
+    async def read(self, images: list[bytes], *, question: str, mime_type: str, max_tokens: int) -> str:
+        content: list[dict] = []
+        for image in images:
+            data = base64.b64encode(image).decode("ascii")
+            content.append({"type": "image", "source": {"type": "base64", "media_type": mime_type, "data": data}})
+        content.append({"type": "text", "text": f"{READ_PROMPT}\n\n{question}"})
+        response = await self._client.messages.create(
+            model=self.model_name,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": content}],
+        )
+        return "".join(b.text for b in response.content if getattr(b, "type", "") == "text").strip()

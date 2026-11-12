@@ -10,7 +10,11 @@ from uuid import UUID, uuid4
 
 from fakes import text, tool_use
 
-from docsmind.adapters.storage.memory import InMemoryConversationStore, InMemoryMemoryStore
+from docsmind.adapters.storage.memory import (
+    InMemoryChangeStore,
+    InMemoryConversationStore,
+    InMemoryMemoryStore,
+)
 from docsmind.agent.agent import FALLBACK_ANSWER, DocsmindAgent
 from docsmind.domain.agent import Usage
 
@@ -23,6 +27,7 @@ def make_agent(config, llm, repo, *, fast=None):
         repository=repo,
         conversations=InMemoryConversationStore(),
         memory=InMemoryMemoryStore(),
+        changes=InMemoryChangeStore(),
     )
 
 
@@ -67,24 +72,19 @@ async def test_simple_turn_searches_cites_and_persists(config, llm, repo):
     assert len(recalled) == 2
 
 
-async def test_complex_turn_plans_and_delegates_in_parallel(config, llm, repo):
-    llm.queue("router", text('{"route": "complex", "question": "Compare retention and security policies"}'))
-    llm.queue("planner", text('{"steps": ["Find retention rules in D1 (delegate)", "Find security rules in D2 (delegate)", "Synthesise with citations"]}'))
+async def test_complex_turn_plans_and_delegates_the_comparison(config, llm, repo):
+    llm.queue("router", text('{"route": "complex", "question": "Compare the retention and security policies"}'))
+    llm.queue(
+        "planner",
+        text('{"steps": ["Compare D1 with D2 (delegate)", "Synthesise with citations"]}'),
+    )
     llm.queue(
         "executor",
-        tool_use(
-            ("delegate", {"subagent": "researcher", "task": "Find retention periods in D1.", "documents": ["D1"]}),
-            ("delegate", {"subagent": "researcher", "task": "Find security rules in D2.", "documents": ["D2"]}),
-        ),
-        text("Retention: invoices 10 years [S1]. Security: encryption mandatory [S2]."),
+        tool_use(("delegate", {"subagent": "change_analyzer", "documents": ["D1", "D2"]})),
+        text("These are different documents, so there is no change table."),
     )
-    llm.queue(
-        "subagent",
-        tool_use(("search", {"query": "retention invoices"})),
-        text("Invoices are kept ten years [S1]."),
-        tool_use(("search", {"query": "encryption"})),
-        text("Encryption at rest is mandatory [S2]."),
-    )
+    explanation = "Retention Policy and Security Policy are different documents."
+    llm.queue("decider", text(json.dumps({"verdict": "unrelated", "newer": "A", "public": False, "explanation": explanation})))
     llm.queue("memory", text('{"facts": [], "doc_notes": []}'))
     agent = make_agent(config, llm, repo)
 
@@ -92,22 +92,16 @@ async def test_complex_turn_plans_and_delegates_in_parallel(config, llm, repo):
     await agent.drain()
 
     t = types(events)
-    assert t.index("route") < t.index("plan") < t.index("subagent_start")
-    plan = next(e for e in events if e.type == "plan").data["steps"]
-    assert len(plan) == 3
-    assert t.count("subagent_start") == 2 and t.count("subagent_end") == 2
-    # Subagent tool activity is tagged so the UI can nest it.
-    inner = [e for e in events if e.type == "tool_start" and e.data["name"] == "search"]
-    assert inner and all("subagent" in e.data for e in inner)
+    assert t.index("route") < t.index("plan") < t.index("subagent_start") < t.index("subagent_end")
+    assert len(next(e for e in events if e.type == "plan").data["steps"]) == 2
+    assert t.count("subagent_start") == 1 and t.count("subagent_end") == 1
+    assert "analysis_start" not in t  # unrelated documents: no table, nothing stored
+    assert not llm.calls_for("scanner")
 
-    answer = next(e for e in events if e.type == "answer").data
-    assert {c["handle"] for c in answer["citations"]} == {"S1", "S2"}  # shared registry across subagents
+    # The executor was handed the analyzer's plain-words reply as the tool result.
+    second = llm.calls_for("executor")[1]["messages"]
+    assert explanation in second[-1].content
 
-    # Subagents got a fresh context: only the task, no conversation or plan.
-    for call in llm.calls_for("subagent"):
-        if len(call["messages"]) == 1:
-            assert call["messages"][0].role == "user"
-            assert "<plan>" not in "".join(b.text for b in call["system"])
     # The executor's plan reached its system prompt (volatile block, after the cache mark).
     exec_system = llm.calls_for("executor")[0]["system"]
     assert exec_system[1].cache is True and "<plan>" in exec_system[-1].text and exec_system[-1].cache is False

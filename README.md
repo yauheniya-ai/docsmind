@@ -30,7 +30,7 @@ will perform specialized tasks.
 | ✅ Chat agent (the Mind) | Routes each question, plans complex ones, searches/reads your documents with tools, delegates to subagents, and answers with verified `[S#]` citations. Streams to the UI over SSE; conversations are saved |
 | ✅ Image captioning (on demand) | The UI/CLI shows what's uncaptioned, estimates cost from image count/resolution, asks for confirmation, then captions only what's missing |
 | ✅ Embeddings + hybrid search (on demand) | The UI/CLI shows what's unembedded, estimates cost from token counts, asks for confirmation, then embeds only what's missing; search uses keyword+semantic fusion when available |
-| 🚧 Change analysis (diffra) | `docsmind diff` exists as a command, without an implementation yet |
+| ✅ Change analysis | Compare two versions: a table of changes (new, modified, removed, editorial, relocated) with compliance requirements, each compliance-relevant row verified against the text with verbatim proof; a report; Excel export. `docsmind diff`, or ask the Mind in chat |
 | 🚧 DOCX/text parsers, S3/Supabase blob storage | Planned |
 
 ## Install
@@ -74,7 +74,8 @@ docsmind doctor
 Configuration is environment-driven (`DOCSMIND_*`, or a `.env` file). Copy
 `.env.example` to `.env` to see every option. Chat needs an LLM key
 (`DOCSMIND_LLM_PROVIDER` plus `DOCSMIND_ANTHROPIC_API_KEY` or `DOCSMIND_OPENAI_API_KEY`);
-ingestion and browsing don't.
+ingestion and browsing don't. Behind a company gateway, also set `DOCSMIND_OPENAI_BASE_URL`
+and/or `DOCSMIND_ANTHROPIC_BASE_URL`; `docsmind doctor` shows which endpoint is used.
 
 ### 2. Ingest a PDF
 
@@ -143,7 +144,7 @@ docsmind chat                                              # REPL, keeps the con
 ```python
 result = dm.chat_result("What are our data retention obligations?")
 print(result.answer, result.citations)
-change_set = dm.compare(v1.id, v2.id)   # planned (diffra)
+result = dm.compare(v2.id, v1.id)       # ChangeResult: message, analysis, rows (current, previous)
 ```
 
 ## How the Mind works
@@ -162,14 +163,46 @@ Question -> Orchestrator --simple--> Executor <-> Tools / Subagents -> Answer
 - **Executor**: a bounded tool loop (`search`, `grep`, `read_pages`, `get_outline`,
   `list_documents`, `delegate`). The last step forces an answer; tool errors go back to the
   model, not the user; old tool results are elided when the context grows.
-- **Subagents** (`researcher`, `change_analyzer`): fresh context, a subset of the tools, run in
-  parallel, cannot delegate further.
+- **Subagents** (`change_analyzer`): see [Change analysis](#change-analysis). It cannot delegate
+  further.
 - **Harness**: deterministic code, not another agent. It orders the prompt stable-first so the
   prefix caches, summarizes long histories, and saves durable notes to memory after each answer.
 - **Citations**: tools register passages as `S1, S2, ...`; the model cites `[S#]`; invented
   handles are dropped and the rest renumbered by first appearance. Document text is treated as
   untrusted data, never as instructions.
 - **Search** is Postgres full-text (ranked) plus exact-text grep; when embeddings exist, semantic vector matches are fused in via reciprocal rank fusion.
+
+### Change analysis
+
+The Change Analyzer compares the **current** version (A) with the **previous** one (B). The Mind
+starts it with `delegate`; the steps run in code, with models used inside them:
+
+1. **Prepare** (code): headers, footers and page numbers are removed, the texts are split into
+   sentences and diffed. Identical texts stop here. Below `CHANGE_DIFF_THRESHOLD` of changed
+   sentences the scan sees A plus the diff, otherwise A and B in full; long documents are split
+   into parts.
+2. **Versions check** (small model): are these versions of one document, which is newer, is it
+   public? Unrelated documents stop here.
+3. **Scan** (one long-context call per part): rows stream into the table as JSONL. A cut-off or
+   broken call is relaunched with the rows so far.
+4. **Verify**: every compliance-relevant row (new/modified/removed, with a normative
+   requirement) gets its own small tool loop. Code then re-checks what the model claims: proof
+   passages must be verbatim in the stored text, the page must hold the passage, and a "new" or
+   "removed" clause must be absent from the other version. A check that goes wrong is started
+   again (up to `CHANGE_VERIFY_MAX_RETRIES`). Rows without proof are dropped: not in the table,
+   the report or the database.
+5. **Changelog** (in parallel with the scan): looked for in the documents and, for public ones,
+   online. Entries that no row explains are checked against both versions.
+6. **Report**: the narrative is written by the model, every countable section by code. Page
+   references ("A p.12") are clickable; in the Mind's answer they are `[S#]` citations.
+
+```bash
+docsmind diff <version-a> <version-b> [--actionable] [--xlsx table.xlsx]   # order does not matter
+```
+
+The table, report and row edits are served by `GET /api/changes`, `GET /api/changes/{id}`,
+`POST|PATCH|DELETE /api/changes/{id}/rows[/{row_id}]` and `GET /api/changes/{id}/export.xlsx`.
+Tuning: the `CHANGE_*` settings in `.env.example`. Needs `docsmind db upgrade` (migration 0005).
 
 ### On-demand enrichment
 
@@ -195,11 +228,13 @@ HTTP:
 - `POST /api/enrichment/jobs/{job_id}/cancel`
 
 Tuning (all `DOCSMIND_*`): `AGENT_FAST_MODEL` (router/summarizer/memory model, defaults to
-`LLM_MODEL`), `AGENT_MAX_STEPS`, `AGENT_SUBAGENT_MAX_STEPS`, `AGENT_MEMORY_ENABLED`,
+`LLM_MODEL`), `AGENT_MAX_STEPS`, `AGENT_MEMORY_ENABLED`,
 `OPENAI_REASONING_EFFORT`, `OPENAI_BASE_URL`. See `.env.example`.
 
 HTTP: `POST /api/chat` streams Server-Sent Events (`route`, `plan`, `tool_start`, `tool_end`,
-`subagent_start`, `subagent_end`, `token`, `note`, `answer`, `error`, `done`);
+`subagent_start`, `subagent_end`, `analysis_start`, `analysis_status`, `change_row`,
+`change_row_update`, `change_row_removed`, `analysis_done`, `token`, `note`, `answer`, `error`,
+`done`);
 `GET /api/conversations[/{id}]`, `DELETE /api/conversations/{id}`, `GET /api/agent`.
 
 ## How ingestion works
@@ -237,7 +272,7 @@ heuristics that work on one PDF break on the next.
 | `docsmind chat [question] [-c <collection>]` | Ask the Mind once, or start a REPL that keeps the conversation |
 | `docsmind embed [--version-id <id>] [-y]` | Estimate cost and create missing embeddings on demand |
 | `docsmind caption [--version-id <id>] [-y]` | Estimate cost and create missing image captions on demand |
-| `docsmind diff` | Planned |
+| `docsmind diff <a> <b> [--actionable] [--xlsx <file>]` | Compare two versions: change table, report, optional Excel file |
 
 ## Architecture
 

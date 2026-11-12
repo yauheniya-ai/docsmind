@@ -149,7 +149,10 @@ async def test_outline_and_missing_outline(tool_ctx):
 
 
 async def test_delegate_unavailable_inside_subagents(tool_ctx):
-    out = await _call(tool_ctx, "delegate", {"subagent": "researcher", "task": "Find retention periods."})
+    out = await _call(tool_ctx, "delegate", {"subagent": "change_analyzer", "documents": ["D1", "D2"]})
+    assert out.is_error
+
+    out = await _call(tool_ctx, "delegate", {"subagent": "change_analyzer", "documents": ["D1"]})
     assert out.is_error
 
 

@@ -18,29 +18,40 @@ _ROSTER = "\n".join(f"- {s.name}: {s.description}" for s in SUBAGENTS.values())
 class DelegateArgs(BaseModel):
     subagent: str = Field(description=f"Which subagent: one of {', '.join(SUBAGENTS)}.")
     task: str = Field(
-        min_length=10,
+        default="",
+        max_length=2000,
         description=(
-            "A complete, self-contained task. The subagent has NO access to this conversation: "
-            "name the documents (handles), the exact question, and what to report."
+            "Optional notes for the subagent, which has NO access to this conversation: what the user "
+            "cares about (a topic, a kind of change), or why rows are being verified."
         ),
     )
     documents: list[str] | None = Field(
-        default=None, description="Document handles the subagent may use. Omit for all documents."
+        default=None,
+        description=(
+            "Comparison: exactly two handles, [current version, previous version] (the newer one first). "
+            "Not needed when analysis_id is given."
+        ),
+    )
+    analysis_id: str | None = Field(
+        default=None, description="Id of an existing change analysis, to verify rows of its table (with row_ids)."
+    )
+    row_ids: list[str] | None = Field(
+        default=None, max_length=50, description="With analysis_id: the ids of the rows to verify again."
     )
 
 
 class DelegateTool(Tool):
     name = "delegate"
-    summary = "Hands a self-contained task to a subagent that works in its own fresh context."
+    long_running = True
+    summary = "Hands a comparison of two document versions to the Change Analyzer, which works in its own fresh context."
     description = (
-        "Delegate a self-contained task to a subagent that works in its own fresh context and returns a "
-        "short report with [S#] citations. Use for large or independent work; several delegate calls in "
-        "one step run in parallel.\nSubagents:\n" + _ROSTER
+        "Delegate to a subagent, which works in its own fresh context and returns a written report. "
+        "It can take minutes.\nSubagents:\n" + _ROSTER
     )
     how_it_works = (
-        "The Mind picks a subagent and writes a self-contained task; the subagent never sees the conversation.",
-        "The subagent works in a fresh context with its own tools (search, grep, read_pages, get_outline) and cannot delegate further.",
-        "Only its short report comes back, with the same [S#] source handles. Several delegations in one step run in parallel.",
+        "The Mind passes the two document handles (current first, previous second); the subagent never sees the conversation.",
+        "Code drives the analysis: prepare and diff the texts, scan for changes, check them against the text, write the report.",
+        "The change table is stored and shown next to the chat; only the written report comes back to the Mind.",
     )
     Args = DelegateArgs
 
@@ -50,5 +61,13 @@ class DelegateTool(Tool):
         if args.subagent not in SUBAGENTS:
             raise ToolInputError(f"Unknown subagent '{args.subagent}'. Choose from: {', '.join(SUBAGENTS)}.")
         ctx.catalog.resolve_many(args.documents)  # validate handles before spending a model call
-        report = await ctx.delegate(args.subagent, args.task, args.documents)
+        if args.analysis_id is None:
+            if not args.documents or len(args.documents) != 2 or args.documents[0] == args.documents[1]:
+                raise ToolInputError(
+                    "Pass documents=[current, previous]: two different document handles, the newer version first."
+                )
+        elif not args.row_ids:
+            raise ToolInputError("Pass row_ids with analysis_id: the rows to verify.")
+        extra = {"analysis_id": args.analysis_id, "row_ids": args.row_ids}
+        report = await ctx.delegate(args.subagent, args.task, args.documents, extra)
         return ToolOutput(report, summary=f"{args.subagent} reported")

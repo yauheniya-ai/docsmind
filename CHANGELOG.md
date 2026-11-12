@@ -2,6 +2,72 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2026-11-12
+
+### Added
+
+- `DOCSMIND_ANTHROPIC_BASE_URL` next to the existing `DOCSMIND_OPENAI_BASE_URL`, so a key plus a
+  gateway/proxy URL works for both providers (chat, vision, embeddings). An empty value means the
+  default endpoint. `docsmind doctor` shows the base URL in use. `.env.example` lists keys and
+  base URLs together.
+
+- Change Analyzer rebuilt as a code-driven pipeline (`agent/subagents/change_analysis/`) that the
+  Mind starts with `delegate`. Given the current and the previous version, it:
+  1. normalizes both texts and diffs them in code (headers, footers and page numbers removed);
+  2. checks that they are versions of one document and which is newer (a small model call);
+  3. scans for changes with one long-context call per part, streaming rows into the table;
+  4. verifies every compliance-relevant row (new, modified or removed, normative, with a
+     requirement) in a small tool loop, and re-checks the quoted proof against the stored text
+     in code: passages must be verbatim, pages must hold them, and a "new" or "removed" claim
+     must be absent from the other version. A check that goes wrong (no usable answer, an error,
+     a proof that is not in the text) is started again, up to `CHANGE_VERIFY_MAX_RETRIES` times.
+     Rows without proof are dropped: they are not in the table, the report or the database;
+  5. searches for a changelog in parallel (in the documents, and online for public ones) and
+     checks the entries that no row explains;
+  6. writes a report: narrative from the model, every countable section built by code. Page
+     references in it ("A p.12") are clickable and open that page of that version; in the Mind's
+     answer they become `[S#]` citations.
+- Change tables are stored (migration `0005`: `change_analyses`, `change_rows`) with a verified
+  flag, proof passages with pages and a human approved flag. Run `docsmind db upgrade`.
+- Routes `/api/changes`: read an analysis, add, edit and delete rows, Excel export.
+- Tools: `page_vision` (a vision model reads a page image), `load_table` (xlsx/csv from a URL,
+  parsed in code) for the Change Analyzer; `export_excel` for the Mind.
+- `docsmind diff` now prints the table and report; `--actionable` and `--xlsx` options.
+- Config: the `change_*` settings (see `.env.example`). Dependency: `openpyxl`.
+
+### Changed
+
+- `compare()` / `acompare()` return a `ChangeResult` (message, analysis, rows). The two versions
+  may be given in either order.
+
+### Removed
+
+- The `researcher` subagent (code, prompt, tests and UI). `change_analyzer` is now the only
+  subagent.
+- The generic subagent loop and `agent_subagent_max_steps`; the Change Analyzer has its own limits.
+
+
+## [0.7.0] - 2026-11-12
+
+### Added
+
+- Change Analyzer can now look for a published changelog online when the documents themselves
+  contain none, using two new subagent-only tools:
+  - `web_search`: searches the web via Tavily, optionally limited to given domains. Only offered
+    when `DOCSMIND_WEB_SEARCH_API_KEY` is set.
+  - `fetch_url`: reads a public web page as text. Hardened for model-supplied URLs (http(s) on
+    ports 80/443 only, no credentials, no private/loopback addresses on any redirect hop,
+    bounded size and time).
+- Config: `web_search_api_key`, `web_timeout_s`, `web_fetch_max_bytes` (documented in
+  `.env.example`).
+- Implementation brief for the Change Analyzer (`docs/`) and unit tests for the web tools.
+
+### Changed
+
+- Change Analyzer prompt and tool list updated to use the web tools as a fallback, preferring
+  the publisher's own domain.
+- Rebuilt the bundled frontend UI assets.
+
 ## [0.6.0] - 2026-11-10
 
 ### Added

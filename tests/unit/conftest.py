@@ -11,7 +11,7 @@ from docsmind.config import DocsmindConfig
 @pytest.fixture
 def config() -> DocsmindConfig:
     return DocsmindConfig(
-        _env_file=None, agent_max_steps=4, agent_subagent_max_steps=3, agent_history_budget_tokens=400
+        _env_file=None, agent_max_steps=4, agent_history_budget_tokens=400
     )
 
 

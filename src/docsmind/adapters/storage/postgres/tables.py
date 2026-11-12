@@ -13,6 +13,7 @@ too — nothing enforces the two staying in sync automatically.
 from __future__ import annotations
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Column,
     Date,
@@ -196,4 +197,46 @@ agent_table_revisions = Table(
     Column("note", Text, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     UniqueConstraint("table_id", "revision", name="uq_agent_table_revisions_table_revision"),
+)
+
+# Added in migration 0005 — the Change Analyzer's output.
+change_analyses = Table(
+    "change_analyses",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("current_version_id", UUID(as_uuid=True), ForeignKey("document_versions.id", ondelete="CASCADE"), nullable=False),
+    Column("previous_version_id", UUID(as_uuid=True), ForeignKey("document_versions.id", ondelete="CASCADE"), nullable=False),
+    Column("status", Text, nullable=False),
+    Column("mode", Text, nullable=False),
+    Column("diff_ratio", Float, nullable=True),
+    Column("public", Boolean, nullable=True),
+    Column("verdict_note", Text, nullable=False),
+    Column("changelog", JSONB, nullable=False),
+    Column("report", Text, nullable=True),
+    Column("meta", JSONB, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+change_rows = Table(
+    "change_rows",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("analysis_id", UUID(as_uuid=True), ForeignKey("change_analyses.id", ondelete="CASCADE"), nullable=False),
+    Column("ordinal", Integer, nullable=False),
+    Column("current_clause", Text, nullable=False),
+    Column("previous_clause", Text, nullable=False),
+    Column("change_description", Text, nullable=False),
+    Column("nature", Text, nullable=False),
+    Column("category", Text, nullable=False),
+    Column("compliance_requirement", Text, nullable=False),
+    Column("binding", Text, nullable=False),
+    Column("applicability_scope", Text, nullable=False),
+    Column("verified", Boolean, nullable=False),
+    Column("proof", JSONB, nullable=False),
+    Column("verification_note", Text, nullable=True),
+    Column("approved", Boolean, nullable=False),
+    Column("origin", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
 )

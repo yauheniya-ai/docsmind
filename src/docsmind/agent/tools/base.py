@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, ValidationError
@@ -26,7 +26,8 @@ from docsmind.domain.errors import ToolInputError
 log = logging.getLogger(__name__)
 
 Emit = Callable[[AgentEvent], None]
-DelegateFn = Callable[[str, str, "list[str] | None"], Awaitable[str]]
+# (subagent name, task, document handles, extra arguments) -> report
+DelegateFn = Callable[[str, str, "list[str] | None", "dict[str, Any]"], Awaitable[str]]
 
 
 @dataclass
@@ -45,7 +46,11 @@ class ToolContext:
     emit: Emit
     delegate: DelegateFn | None = None  # None for subagents: no recursion
     embedder: Any = None  # query embedder for semantic search; None = keyword search only
-
+    changes: Any = None  # ChangeStore (export_excel)
+    vision: Any = None  # VisionCaptioner (page_vision); None = not configured
+    # Per-run scratch space for the Change Analyzer's tools (parsed tables, text read by page_vision).
+    cache: dict[str, Any] = field(default_factory=dict)
+    vision_log: list[str] = field(default_factory=list)  # everything page_vision returned in this loop
 
 class Tool:
     name: ClassVar[str]
@@ -53,6 +58,7 @@ class Tool:
     summary: ClassVar[str] = ""  # one plain sentence for people (shown in the UI)
     how_it_works: ClassVar[tuple[str, ...]] = ()  # quick-reference steps for people (UI only, never sent to the model)
     subagent_only: ClassVar[bool] = False  # True: never offered to the main executor, only to subagents that list it
+    long_running: ClassVar[bool] = False  # True: no per-call timeout (the tool is a whole pipeline, e.g. delegate)
     Args: ClassVar[type[BaseModel]]
 
     @classmethod
@@ -145,7 +151,9 @@ class ToolRegistry:
             return ToolOutput(f"Invalid arguments: {_validation_message(exc)}", True, "invalid arguments")
 
         try:
-            output = await asyncio.wait_for(tool.run(args, ctx), timeout=ctx.config.agent_tool_timeout_s)
+            output = await asyncio.wait_for(
+                tool.run(args, ctx), timeout=None if tool.long_running else ctx.config.agent_tool_timeout_s
+            )
         except ToolInputError as exc:
             return ToolOutput(str(exc), True, str(exc))
         except asyncio.TimeoutError:

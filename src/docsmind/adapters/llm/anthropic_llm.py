@@ -33,7 +33,9 @@ _STOP: dict[str, StopReason] = {
 
 
 class AnthropicLLM:
-    def __init__(self, *, api_key: str | None, model: str, timeout: float = 120.0) -> None:
+    def __init__(
+        self, *, api_key: str | None, model: str, base_url: str | None = None, timeout: float = 120.0
+    ) -> None:
         if not api_key:
             raise LLMConfigurationError(
                 "Anthropic API key is not set. Add DOCSMIND_ANTHROPIC_API_KEY to your .env "
@@ -46,7 +48,7 @@ class AnthropicLLM:
                 'The anthropic package is not installed. Run `pip install "docsmind[anthropic]"`.'
             ) from exc
         self.model = model
-        self._client = AsyncAnthropic(api_key=api_key, max_retries=3, timeout=timeout)
+        self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, max_retries=3, timeout=timeout)
 
     @staticmethod
     def _system(blocks: list[SystemBlock]) -> list[dict[str, Any]]:

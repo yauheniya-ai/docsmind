@@ -16,12 +16,11 @@ from uuid import UUID
 
 from docsmind.config import DocsmindConfig
 from docsmind.domain.errors import EnrichmentConfigurationError, EnrichmentError
-from docsmind.enrichment.pricing import (
+from docsmind.pricing import (
     caption_estimate,
     count_tokens,
     embedding_estimate,
     image_tokens,
-    resolve_vision_model,
 )
 
 log = logging.getLogger(__name__)
@@ -65,7 +64,7 @@ class EnrichmentService:
     def vision_model(self) -> str:
         if self._captioner is not None:
             return self._captioner.model_name
-        return resolve_vision_model(self.config.vision_provider, self.config.vision_model)
+        return self.config.resolved_vision_model
 
     def _get_embedder(self):
         if self._embedder is None:
@@ -191,7 +190,7 @@ class EnrichmentService:
                     skipped += 1
                     continue
                 items += 1
-                image_tokens_total += image_tokens(row["width"], row["height"], provider=provider, model=model)
+                image_tokens_total += image_tokens(row["width"], row["height"], provider=provider)
             after = rows[-1]["id"]
         status = await self.repo.enrichment_status(self.embedding_model, version_ids)
         return caption_estimate(

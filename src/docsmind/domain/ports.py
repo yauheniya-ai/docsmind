@@ -9,7 +9,7 @@ client class is enough.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from docsmind.domain.agent import (
@@ -22,6 +22,7 @@ from docsmind.domain.agent import (
     ToolChoice,
     ToolSpec,
 )
+from docsmind.domain.changes import ChangeAnalysis, ChangeRow
 from docsmind.domain.documents import Chunk, Document, DocumentVersion, ParsedDocument
 
 
@@ -51,6 +52,10 @@ class VisionCaptioner(Protocol):
     """Describes an image well enough to be searchable and cited."""
 
     async def caption(self, image_bytes: bytes, *, mime_type: str) -> str:
+        ...
+
+    async def read(self, images: list[bytes], *, question: str, mime_type: str, max_tokens: int) -> str:
+        """Answers a focused question about page images (used by `page_vision`)."""
         ...
 
 
@@ -135,4 +140,41 @@ class MemoryStore(Protocol):
 
     async def recall(self, *, version_ids: list[UUID] | None, limit: int) -> list[MemoryItem]:
         """Most recent facts plus notes for the given versions (None = any)."""
+        ...
+
+
+class ChangeStore(Protocol):
+    """Change analyses and their tables (one row per change). Rows are updated one at a
+    time: verification runs in parallel and analysts edit while a run is still going."""
+
+    async def create_analysis(self, analysis: ChangeAnalysis) -> None:
+        ...
+
+    async def update_analysis(self, analysis_id: UUID, **fields: Any) -> None:
+        ...
+
+    async def get_analysis(self, analysis_id: UUID) -> ChangeAnalysis | None:
+        ...
+
+    async def list_analyses(self, limit: int = 50) -> list[dict]:
+        """Newest first, each with the two documents' titles/labels and its row counts."""
+        ...
+
+    async def delete_analysis(self, analysis_id: UUID) -> bool:
+        ...
+
+    async def add_row(self, row: ChangeRow) -> ChangeRow:
+        """Appends the row to the end of the analysis' table (assigns `ordinal`)."""
+        ...
+
+    async def update_row(self, row_id: UUID, **fields: Any) -> ChangeRow | None:
+        ...
+
+    async def get_row(self, row_id: UUID) -> ChangeRow | None:
+        ...
+
+    async def delete_row(self, row_id: UUID) -> bool:
+        ...
+
+    async def list_rows(self, analysis_id: UUID) -> list[ChangeRow]:
         ...

@@ -65,8 +65,8 @@ def test_web_tools_belong_to_the_change_analyzer_only(config, llm, repo):
     info = make_agent(config, llm, repo).describe()
     assert not {"web_search", "fetch_url"} & {t["name"] for t in info["agent"]["tools"]}
     by_name = {s["name"]: {t["name"] for t in s["tools"]} for s in info["subagents"]}
+    assert set(by_name) == {"change_analyzer"}
     assert {"web_search", "fetch_url"} <= by_name["change_analyzer"]
-    assert not {"web_search", "fetch_url"} & by_name["researcher"]
 
 
 def test_web_search_is_offered_only_when_configured():

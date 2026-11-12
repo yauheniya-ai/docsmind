@@ -77,9 +77,17 @@ def _check_api_keys(config: DocsmindConfig, results: Table) -> None:
     if "anthropic" in needed:
         status = "[green]ok[/green]" if config.anthropic_api_key else "[red]missing[/red]"
         results.add_row("ANTHROPIC_API_KEY", status, "required for llm_provider/vision_provider=anthropic")
+        results.add_row("ANTHROPIC_BASE_URL", *_base_url(config.anthropic_base_url))
     if "openai" in needed:
         status = "[green]ok[/green]" if config.openai_api_key else "[red]missing[/red]"
         results.add_row("OPENAI_API_KEY", status, "required for embedding/llm provider=openai")
+        results.add_row("OPENAI_BASE_URL", *_base_url(config.openai_base_url))
+
+
+def _base_url(url: str | None) -> tuple[str, str]:
+    if not url:
+        return "[dim]default[/dim]", "the provider's own endpoint (set it to go through a gateway or proxy)"
+    return "[green]set[/green]", f"requests go to {url}"
 
 
 if __name__ == "__main__":

@@ -4,17 +4,19 @@ from __future__ import annotations
 
 from docsmind.config import DocsmindConfig
 from docsmind.domain.errors import EnrichmentConfigurationError
-from docsmind.enrichment.pricing import resolve_vision_model
 
 
 def create_captioner(config: DocsmindConfig):
     provider = config.vision_provider
-    model = resolve_vision_model(provider, config.vision_model)
+    model = config.resolved_vision_model
     if provider == "anthropic":
         from docsmind.adapters.vision.captioners import AnthropicCaptioner
 
         return AnthropicCaptioner(
-            api_key=config.anthropic_api_key, model=model, max_output_tokens=config.vision_max_output_tokens
+            api_key=config.anthropic_api_key,
+            model=model,
+            base_url=config.anthropic_base_url,
+            max_output_tokens=config.vision_max_output_tokens,
         )
     if provider == "openai":
         from docsmind.adapters.vision.captioners import OpenAICaptioner

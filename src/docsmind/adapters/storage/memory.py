@@ -1,13 +1,15 @@
-"""In-memory `ConversationStore` / `MemoryStore`. Used by tests and by
+"""In-memory `ConversationStore` / `MemoryStore` / `ChangeStore`. Used by tests and by
 one-off scripts that don't want to touch Postgres; same contract as the
 Postgres versions."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 from docsmind.domain.agent import Conversation, MemoryItem, StoredMessage
+from docsmind.domain.changes import ChangeAnalysis, ChangeRow
 
 
 class InMemoryConversationStore:
@@ -81,3 +83,69 @@ class InMemoryMemoryStore:
         ]
         items.sort(key=lambda i: i.created_at, reverse=True)
         return items[:limit]
+
+
+class InMemoryChangeStore:
+    """`ChangeStore` in memory (tests, scripts). Same contract as `PostgresChangeStore`."""
+
+    def __init__(self) -> None:
+        self._analyses: dict[UUID, ChangeAnalysis] = {}
+        self._rows: dict[UUID, ChangeRow] = {}
+
+    async def create_analysis(self, analysis: ChangeAnalysis) -> None:
+        self._analyses[analysis.id] = analysis.model_copy(deep=True)
+
+    async def update_analysis(self, analysis_id: UUID, **fields: Any) -> None:
+        current = self._analyses[analysis_id]
+        self._analyses[analysis_id] = current.model_copy(update={**fields, "updated_at": datetime.now(timezone.utc)})
+
+    async def get_analysis(self, analysis_id: UUID) -> ChangeAnalysis | None:
+        found = self._analyses.get(analysis_id)
+        return found.model_copy(deep=True) if found else None
+
+    async def list_analyses(self, limit: int = 50) -> list[dict]:
+        newest = sorted(self._analyses.values(), key=lambda a: a.created_at, reverse=True)
+        return [
+            {
+                "id": a.id,
+                "status": a.status,
+                "mode": a.mode,
+                "diff_ratio": a.diff_ratio,
+                "created_at": a.created_at,
+                "updated_at": a.updated_at,
+                "current_version_id": a.current_version_id,
+                "previous_version_id": a.previous_version_id,
+                "row_count": sum(r.analysis_id == a.id for r in self._rows.values()),
+                "verified_count": sum(r.analysis_id == a.id and r.verified for r in self._rows.values()),
+            }
+            for a in newest[:limit]
+        ]
+
+    async def delete_analysis(self, analysis_id: UUID) -> bool:
+        for row_id in [r.id for r in self._rows.values() if r.analysis_id == analysis_id]:
+            del self._rows[row_id]
+        return self._analyses.pop(analysis_id, None) is not None
+
+    async def add_row(self, row: ChangeRow) -> ChangeRow:
+        ordinal = max((r.ordinal for r in self._rows.values() if r.analysis_id == row.analysis_id), default=-1) + 1
+        stored = row.model_copy(update={"ordinal": ordinal}, deep=True)
+        self._rows[stored.id] = stored
+        return stored.model_copy(deep=True)
+
+    async def update_row(self, row_id: UUID, **fields: Any) -> ChangeRow | None:
+        current = self._rows.get(row_id)
+        if current is None:
+            return None
+        self._rows[row_id] = current.model_copy(update={**fields, "updated_at": datetime.now(timezone.utc)})
+        return self._rows[row_id].model_copy(deep=True)
+
+    async def get_row(self, row_id: UUID) -> ChangeRow | None:
+        found = self._rows.get(row_id)
+        return found.model_copy(deep=True) if found else None
+
+    async def delete_row(self, row_id: UUID) -> bool:
+        return self._rows.pop(row_id, None) is not None
+
+    async def list_rows(self, analysis_id: UUID) -> list[ChangeRow]:
+        rows = [r for r in self._rows.values() if r.analysis_id == analysis_id]
+        return [r.model_copy(deep=True) for r in sorted(rows, key=lambda r: r.ordinal)]

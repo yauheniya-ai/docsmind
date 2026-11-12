@@ -17,7 +17,7 @@ import contextlib
 import logging
 import time
 from collections.abc import AsyncIterator
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from docsmind.agent import prompts
 from docsmind.agent.catalog import Catalog
@@ -28,6 +28,9 @@ from docsmind.agent.loop import run_tool_loop
 from docsmind.agent.orchestrator import Orchestrator
 from docsmind.agent.planner import Planner
 from docsmind.agent.sources import SourceRegistry, finalize_citations
+from docsmind.agent.subagents.change_analysis.analyzer import ChangeAnalyzer
+from docsmind.agent.subagents.change_analysis.env import RunEnv
+from docsmind.agent.subagents.change_analysis.report import cite_pages
 from docsmind.agent.subagents.specs import SUBAGENTS
 from docsmind.agent.tools import ToolContext, ToolRegistry, build_registry
 from docsmind.agent.tools.base import Emit
@@ -39,17 +42,18 @@ from docsmind.domain.agent import (
     StoredMessage,
     Usage,
 )
+from docsmind.domain.changes import ChangeResult
 from docsmind.domain.errors import (
     AgentError,
     ConversationNotFoundError,
     LLMConfigurationError,
+    ToolInputError,
 )
-from docsmind.domain.ports import LLM, ConversationStore, MemoryStore
+from docsmind.domain.ports import LLM, ChangeStore, ConversationStore, MemoryStore
 
 log = logging.getLogger(__name__)
 
 MAX_QUESTION_CHARS = 8_000
-MAX_SUBAGENT_REPORT_CHARS = 4_000
 FALLBACK_ANSWER = (
     "I ran out of steps before I could finish. Try narrowing the question or selecting a single document."
 )
@@ -65,14 +69,20 @@ class DocsmindAgent:
         repository=None,
         conversations: ConversationStore | None = None,
         memory: MemoryStore | None = None,
+        changes: ChangeStore | None = None,
+        vision=None,
+        scan_llm: LLM | None = None,
         tools: ToolRegistry | None = None,
     ) -> None:
         self.config = config
         self._llm = llm
         self._fast_llm = fast_llm
+        self._scan_llm = scan_llm
         self._repo = repository
         self._conversations = conversations
         self._memory = memory
+        self._changes = changes
+        self._vision = vision
         self._query_embedder = None
         self.tools = tools or build_registry()
         self.main_tools = self.tools.for_executor()
@@ -99,6 +109,39 @@ class DocsmindAgent:
             else:
                 self._fast_llm = self.llm
         return self._fast_llm
+
+    @property
+    def scan_llm(self) -> LLM:
+        """The long-context model of the Change Analyzer's scan (defaults to the main model)."""
+        if self._scan_llm is None:
+            if self.config.change_scan_model and self.config.change_scan_model != self.config.llm_model:
+                from docsmind.adapters.llm import create_llm
+
+                self._scan_llm = create_llm(self.config, model=self.config.change_scan_model)
+            else:
+                self._scan_llm = self.llm
+        return self._scan_llm
+
+    @property
+    def vision(self):
+        """The vision model for `page_vision`, or None when its API key is not configured."""
+        if self._vision is None:
+            try:
+                from docsmind.adapters.vision import create_captioner
+                from docsmind.domain.errors import EnrichmentConfigurationError
+
+                self._vision = create_captioner(self.config)
+            except (EnrichmentConfigurationError, ImportError):
+                self._vision = False
+        return None if self._vision is False else self._vision
+
+    @property
+    def changes(self) -> ChangeStore:
+        if self._changes is None:
+            from docsmind.adapters.storage.postgres.change_store import PostgresChangeStore
+
+            self._changes = PostgresChangeStore(self.config)
+        return self._changes
 
     @property
     def repo(self):
@@ -229,8 +272,8 @@ class DocsmindAgent:
                     "system_prompt": spec.prompt,
                     "context": [register],
                     "user_prompt": (
-                        "The `task` the Mind wrote in its `delegate` call. A fresh context: no history, "
-                        "memory or plan."
+                        "The two document handles (current version first) from the Mind's `delegate` call, plus "
+                        "optional notes. Each stage gets its own fresh context: no history, memory or plan."
                     ),
                     "description": spec.description,
                     "model": self.config.llm_model,
@@ -240,7 +283,7 @@ class DocsmindAgent:
             ],
             "limits": {
                 "max_steps": self.config.agent_max_steps,
-                "subagent_max_steps": self.config.agent_subagent_max_steps,
+                "verify_max_steps": self.config.change_verify_max_steps,
             },
         }
 
@@ -300,6 +343,43 @@ class DocsmindAgent:
             raise AgentError("The Mind finished without an answer.")
         return result
 
+    async def compare(
+        self,
+        current: UUID,
+        previous: UUID,
+        *,
+        notes: str = "",
+        on_event: Emit | None = None,
+    ) -> ChangeResult:
+        """Run the Change Analyzer on two ingested versions, without a chat. The versions check
+        may swap them if their labels say the second is the newer one."""
+        rows = await self.repo.list_catalog([current, previous])
+        catalog = Catalog.from_rows(rows)
+        docs = [catalog.by_version(current), catalog.by_version(previous)]
+        if docs[0] is None or docs[1] is None or current == previous:
+            raise AgentError("Pass two different, ingested document versions.")
+        env = self._make_env(on_event or (lambda _event: None), SUBAGENTS["change_analyzer"].tools)
+        analyzer = ChangeAnalyzer(env, catalog)
+        message = await analyzer.compare(docs[0], docs[1], notes)
+        if analyzer.analysis_id is None:
+            return ChangeResult(message=message)
+        analysis = await self.changes.get_analysis(analyzer.analysis_id)
+        return ChangeResult(message=message, analysis=analysis, rows=await self.changes.list_rows(analyzer.analysis_id))
+
+    def _make_env(self, emit: Emit, tool_names: tuple[str, ...]) -> RunEnv:
+        return RunEnv(
+            config=self.config,
+            llm=self.llm,
+            fast_llm=self.fast_llm,
+            scan_llm=self.scan_llm,
+            repo=self.repo,
+            changes=self.changes,
+            tools=self.tools.subset(tool_names),
+            emit=emit,
+            vision=self.vision,
+            embedder=self.query_embedder,
+        )
+
     async def drain(self, timeout: float = 15.0) -> None:
         """Wait for background work (memory notes). Call before shutting the
         event loop down; the server doesn't need to."""
@@ -340,6 +420,17 @@ class DocsmindAgent:
         started = time.monotonic()
         usage = Usage()
         llm, fast = self.llm, self.fast_llm  # fail fast on missing keys, before any DB work
+
+        # Change analyses started during this turn are remembered on the assistant message, so the
+        # UI can reopen their tables when the conversation is loaded again.
+        analyses: list[str] = []
+        send = emit
+
+        def emit(event: AgentEvent) -> None:
+            if event.type == "analysis_start" and event.data.get("id") not in analyses:
+                analyses.append(event.data["id"])
+            send(event)
+
 
         # --- harness: gather everything the prompts are built from ---------------
         conversation: Conversation | None = None
@@ -401,8 +492,9 @@ class DocsmindAgent:
             sources=sources,
             config=self.config,
             emit=emit,
-            delegate=self._make_delegate(llm, catalog, sources, usage, emit),
+            delegate=self._make_delegate(catalog, sources, usage, emit),
             embedder=self.query_embedder,
+            changes=self.changes,
         )
         bundle = self.builder.executor(state, self.main_tools.specs())
         result = await run_tool_loop(
@@ -427,6 +519,8 @@ class DocsmindAgent:
             "steps": result.steps,
             "usage": usage.model_dump(),
         }
+        if analyses:
+            route_meta["analyses"] = analyses
         citation_dicts = [c.model_dump(mode="json") for c in citations]
         if conversation is None:
             conversation = await self.conversations.create(question[:80])
@@ -468,49 +562,44 @@ class DocsmindAgent:
 
     # -- subagents -------------------------------------------------------------------------
 
-    def _make_delegate(self, llm: LLM, catalog: Catalog, sources: SourceRegistry, usage: Usage, emit: Emit):
-        async def delegate(name: str, task: str, documents: list[str] | None) -> str:
-            spec = SUBAGENTS[name]
-            sub_id = uuid4().hex[:8]
-            # Same handles as the parent (D1, D3...), restricted to what was asked for.
-            sub_catalog = Catalog(catalog.resolve_many(documents))
-            sub_ctx = ToolContext(
-                repo=self.repo,
-                catalog=sub_catalog,
-                sources=sources,  # shared: [S#] handles stay valid for the parent
-                config=self.config,
-                emit=emit,
-                delegate=None,  # no recursion
-                embedder=self.query_embedder,
-            )
-            registry = self.tools.subset(spec.tools).configured(self.config)
-            bundle = self.builder.subagent(spec, task, sub_catalog, registry.specs())
-
-            emit(AgentEvent(type="subagent_start", data={"id": sub_id, "name": spec.name, "task": task}))
-            ok = False
+    def _make_delegate(self, catalog: Catalog, sources: SourceRegistry, usage: Usage, emit: Emit):
+        async def delegate(name: str, task: str, documents: list[str] | None, extra: dict) -> str:
+            if name not in SUBAGENTS:
+                raise ToolInputError(f"Unknown subagent '{name}'.")
+            env = self._make_env(emit, SUBAGENTS[name].tools)
+            analyzer = ChangeAnalyzer(env, catalog)
             try:
-                result = await run_tool_loop(
-                    llm=llm,
-                    bundle=bundle,
-                    registry=registry,
-                    ctx=sub_ctx,
-                    usage=usage,
-                    emit=emit,
-                    max_steps=spec.max_steps or self.config.agent_subagent_max_steps,
-                    max_tokens=self.config.agent_max_output_tokens,
-                    context_budget_tokens=self.config.agent_context_budget_tokens,
-                    stream_text=False,
-                    event_tag={"subagent": sub_id},
-                )
-                ok = bool(result.text)
-                report = result.text or "The subagent finished without a report."
-                if result.exhausted:
-                    report += "\n(The subagent hit its step limit; the report may be incomplete.)"
-                return report[:MAX_SUBAGENT_REPORT_CHARS]
+                if extra.get("analysis_id"):
+                    try:
+                        analysis_id = UUID(str(extra["analysis_id"]).strip())
+                    except ValueError as exc:
+                        raise ToolInputError("analysis_id is not a valid id.") from exc
+                    return await analyzer.verify_existing(analysis_id, extra.get("row_ids") or [], task)
+                docs = catalog.resolve_many(documents)
+                if len(docs) != 2:
+                    raise ToolInputError("Pass exactly two documents: [current, previous].")
+                report = await analyzer.compare(docs[0], docs[1], task)
+                return await self._cite_report_pages(report, analyzer, catalog, sources)
             finally:
-                emit(AgentEvent(type="subagent_end", data={"id": sub_id, "name": spec.name, "ok": ok}))
+                usage.add(env.usage)
 
         return delegate
+
+    async def _cite_report_pages(
+        self, report: str, analyzer: ChangeAnalyzer, catalog: Catalog, sources: SourceRegistry
+    ) -> str:
+        """"(A p.12)" in the report -> `[S#]` sources of the Mind's turn, so its answer carries
+        clickable citations that open the page."""
+        if analyzer.analysis_id is None:
+            return report
+        analysis = await self.changes.get_analysis(analyzer.analysis_id)
+        if analysis is None:
+            return report
+        current = catalog.by_version(analysis.current_version_id)
+        previous = catalog.by_version(analysis.previous_version_id)
+        if current is None or previous is None:
+            return report
+        return await cite_pages(report, a=current, b=previous, repo=self.repo, registry=sources)
 
     def _spawn(self, coro) -> None:
         task = asyncio.create_task(coro)

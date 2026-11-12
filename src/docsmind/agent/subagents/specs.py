@@ -16,30 +16,22 @@ class SubagentSpec:
     description: str  # shown to the Mind (tool description) and in the UI
     prompt: str
     tools: tuple[str, ...]
-    max_steps: int | None = None  # defaults to config.agent_subagent_max_steps
 
-
-RESEARCHER = SubagentSpec(
-    name="researcher",
-    role="Evidence gathering",
-    description=(
-        "Investigates one focused question across the given documents and reports the "
-        "evidence with citations. Use for large reads or to run several investigations in parallel."
-    ),
-    prompt=prompts.RESEARCHER,
-    tools=("search", "grep", "read_pages", "get_outline"),
-)
 
 CHANGE_ANALYZER = SubagentSpec(
     name="change_analyzer",
     role="Version comparison",
     description=(
-        "Compares two versions of a document (or two related documents) and reports what was "
-        "added, removed or reworded, section by section, with citations on both sides. It first "
-        "looks for a changelog in the documents and, when web access is configured, online."
+        "Compares two versions of a document and builds a change table (one row per change: clause, "
+        "nature, compliance requirement, binding, scope), with every compliance-relevant row checked "
+        "against the text and a written report. Pass documents=[current, previous]. It also finds "
+        "and uses a published changelog (in the documents and, for public documents, online). "
+        "Pass analysis_id and row_ids instead to verify rows of an existing table."
     ),
-    prompt=prompts.CHANGE_ANALYZER,
-    tools=("search", "grep", "read_pages", "get_outline", "web_search", "fetch_url"),
+    prompt=prompts.change_analyzer_overview(),
+    # Tools its tool loops (changelog search, row verification) may use; the web tools are only
+    # offered for public documents.
+    tools=("search", "grep", "read_pages", "get_outline", "page_vision", "load_table", "web_search", "fetch_url"),
 )
 
-SUBAGENTS: dict[str, SubagentSpec] = {s.name: s for s in (RESEARCHER, CHANGE_ANALYZER)}
+SUBAGENTS: dict[str, SubagentSpec] = {s.name: s for s in (CHANGE_ANALYZER,)}

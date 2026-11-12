@@ -15,7 +15,7 @@ from uuid import UUID
 
 from docsmind.config import DocsmindConfig
 from docsmind.domain.agent import AgentResult
-from docsmind.domain.changes import ChangeSet
+from docsmind.domain.changes import ChangeResult
 from docsmind.domain.documents import DocumentVersion
 from docsmind.domain.tables import AgentTable
 
@@ -55,8 +55,10 @@ class Docsmind:
         """Like `chat`, but returns the full result (citations, conversation id)."""
         return _run(self._async.achat_result(question, collection=collection, conversation_id=conversation_id))
 
-    def compare(self, version_a: UUID, version_b: UUID) -> ChangeSet:
-        return _run(self._async.acompare(version_a, version_b))
+    def compare(self, version_a: UUID, version_b: UUID, *, notes: str = "") -> ChangeResult:
+        """Compare two versions of a document (any order: the newer one is detected). Returns the
+        report text and the stored change table."""
+        return _run(self._async.acompare(version_a, version_b, notes=notes))
 
     def get_table(self, table_id: UUID) -> AgentTable:
         return _run(self._async.aget_table(table_id))
@@ -107,11 +109,10 @@ class AsyncDocsmind:
         await agent.drain()
         return result
 
-    async def acompare(self, version_a: UUID, version_b: UUID) -> ChangeSet:
-        from docsmind.agent.subagents.change_analysis.subagent import ChangeAnalysisSubagent
+    async def acompare(self, version_a: UUID, version_b: UUID, *, notes: str = "") -> ChangeResult:
+        from docsmind.agent.agent import DocsmindAgent
 
-        subagent = ChangeAnalysisSubagent(config=self.config)
-        return await subagent.compare(version_a, version_b)
+        return await DocsmindAgent(config=self.config).compare(version_a, version_b, notes=notes)
 
     async def aget_table(self, table_id: UUID) -> AgentTable:
         from docsmind.adapters.storage.postgres.tables import PostgresTableRepository

@@ -25,7 +25,7 @@ def create_llm(config: DocsmindConfig, *, model: str | None = None) -> LLM:
     if provider == "anthropic":
         from docsmind.adapters.llm.anthropic_llm import AnthropicLLM
 
-        return AnthropicLLM(api_key=config.anthropic_api_key, model=model)
+        return AnthropicLLM(api_key=config.anthropic_api_key, model=model, base_url=config.anthropic_base_url)
     raise LLMConfigurationError(
         f"Unknown DOCSMIND_LLM_PROVIDER '{config.llm_provider}'. Use 'anthropic' or 'openai'."
     )

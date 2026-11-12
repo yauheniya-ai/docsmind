@@ -176,8 +176,26 @@ def _check_url(url: str) -> str:
 
 
 async def _fetch(url: str, config: DocsmindConfig) -> tuple[str, str, str]:
-    """-> (final url, content type, decoded body). Redirects are followed by hand so every hop is checked."""
+    """-> (final url, content type, decoded body) of a text page."""
+    final_url, content_type, data, encoding = await fetch_bytes(url, config, allowed=TEXT_TYPES)
+    try:
+        return final_url, content_type or "text/html", data.decode(encoding, errors="replace")
+    except LookupError:
+        return final_url, content_type or "text/html", data.decode("utf-8", errors="replace")
+
+
+async def fetch_bytes(
+    url: str,
+    config: DocsmindConfig,
+    *,
+    allowed: tuple[str, ...] | None,
+    max_bytes: int | None = None,
+) -> tuple[str, str, bytes, str]:
+    """-> (final url, content type, raw body, charset). Redirects are followed by hand so every hop
+    is checked. `allowed` lists content-type prefixes that may be read (None = any); a body beyond
+    `max_bytes` (default `web_fetch_max_bytes`) is cut."""
     url = _check_url(url)
+    limit = max_bytes or config.web_fetch_max_bytes
     headers = {"User-Agent": USER_AGENT, "Accept": "text/html,text/plain;q=0.9,*/*;q=0.1"}
     async with httpx.AsyncClient(timeout=config.web_timeout_s, follow_redirects=False, headers=headers) as client:
         for _ in range(MAX_REDIRECTS + 1):
@@ -193,20 +211,16 @@ async def _fetch(url: str, config: DocsmindConfig) -> tuple[str, str, str]:
                     if response.status_code >= 400:
                         raise ToolInputError(f"The server answered HTTP {response.status_code} for {url}.")
                     content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
-                    if content_type and not content_type.startswith(TEXT_TYPES):
+                    if allowed is not None and content_type and not content_type.startswith(allowed):
                         raise ToolInputError(
                             f"{url} is {content_type}, which cannot be read here. Only HTML or plain text pages work."
                         )
                     data = bytearray()
                     async for chunk in response.aiter_bytes():
                         data += chunk
-                        if len(data) > config.web_fetch_max_bytes:
+                        if len(data) > limit:
                             break
-                    encoding = response.encoding or "utf-8"
-                    try:
-                        return url, content_type or "text/html", bytes(data).decode(encoding, errors="replace")
-                    except LookupError:
-                        return url, content_type or "text/html", bytes(data).decode("utf-8", errors="replace")
+                    return url, content_type, bytes(data[:limit]), response.encoding or "utf-8"
             except httpx.HTTPError as exc:
                 raise ToolInputError(f"Could not fetch {url}: {type(exc).__name__}.") from exc
     raise ToolInputError("Too many redirects.")

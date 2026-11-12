@@ -1,9 +1,9 @@
-"""Cost estimation for on-demand embeddings and image captions.
+"""Every price in the app, in one place: models, embeddings, and the cost helpers built on them.
 
-These are *estimates* shown before the user confirms. The price table is
-built in and will drift over time; every price can be overridden from config
-(`DOCSMIND_EMBEDDING_PRICE_PER_MILLION`, ...), and an unknown model yields a
-cost of `None` ("price unknown") rather than a wrong number.
+Used by the enrichment estimates (embeddings, image captions) and by the cost line of a Change
+Analyzer report. The tables are built in and will drift over time; the embedding and vision prices
+can be overridden from config (`DOCSMIND_EMBEDDING_PRICE_PER_MILLION`, ...), and an unknown model
+yields a cost of `None` ("price unknown") rather than a wrong number.
 
 Prices are USD per 1M tokens.
 """
@@ -13,25 +13,21 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-# Longest prefix wins, so list specific names before general ones in lookups.
+from docsmind.domain.agent import Usage
+
+# The one embedding model of the app.
 EMBEDDING_PRICES: dict[str, float] = {
     "text-embedding-3-large": 0.13,
-    "text-embedding-3-small": 0.02,
-    "text-embedding-ada-002": 0.10,
 }
 
-# model prefix -> (input $/1M tokens, output $/1M tokens)
-VISION_PRICES: dict[str, tuple[float, float]] = {
-    "claude-haiku-4": (1.00, 5.00),
-    "claude-sonnet-4": (3.00, 15.00),
-    "gpt-4o-mini": (0.15, 0.60),
-    "gpt-4o": (2.50, 10.00),
-    "gpt-4.1-nano": (0.10, 0.40),
-    "gpt-4.1-mini": (0.40, 1.60),
-    "gpt-4.1": (2.00, 8.00),
+# Every chat and vision model of the app: model prefix -> (input $/1M tokens, output $/1M tokens).
+# Longest prefix wins. "claude-sonnet-5" matches both spellings of the model id (5-5 and 5.5).
+MODEL_PRICES: dict[str, tuple[float, float]] = {
+    "gpt-6.1-sol": (2.00, 10.00),
+    "gpt-6.1-terra": (1.00, 5.00),
+    "gpt-6-luna": (0.10, 0.50),
+    "claude-sonnet-5": (2.00, 10.00),
 }
-
-DEFAULT_VISION_MODELS = {"anthropic": "claude-haiku-4-5", "openai": "gpt-4o-mini"}
 
 # Tokens in the captioning instruction, and a plausible range for the reply.
 CAPTION_PROMPT_TOKENS = 110
@@ -62,11 +58,7 @@ def count_tokens(text: str) -> int:
         return max(1, len(text) // 4)
 
 
-def resolve_vision_model(provider: str, model: str | None) -> str:
-    return model or DEFAULT_VISION_MODELS.get(provider, "")
-
-
-def image_tokens(width: int, height: int, *, provider: str, model: str) -> int:
+def image_tokens(width: int, height: int, *, provider: str) -> int:
     """Approximate input tokens one image costs, from its pixel size."""
     width, height = max(1, width), max(1, height)
     if provider == "anthropic":
@@ -75,15 +67,16 @@ def image_tokens(width: int, height: int, *, provider: str, model: str) -> int:
         scale = min(1.0, 1568 / max(width, height), math.sqrt(1_150_000 / (width * height)))
         return max(1, round((width * scale) * (height * scale) / 750))
 
-    # OpenAI "high detail": fit in 2048x2048, then shortest side to 768, then
-    # count 512 px tiles. The 4o-mini family bills tiles at a much higher rate.
+    # OpenAI "high detail": fit in 2048x2048, then shortest side to 768, then count 512 px tiles.
     scale = min(1.0, 2048 / max(width, height))
     w, h = width * scale, height * scale
     shrink = min(1.0, 768 / min(w, h))
     w, h = w * shrink, h * shrink
     tiles = math.ceil(w / 512) * math.ceil(h / 512)
-    base, per_tile = (2833, 5667) if "gpt-4o-mini" in model.lower() else (85, 170)
-    return base + per_tile * tiles
+    return 85 + 170 * tiles
+
+
+# -- estimates shown before an on-demand enrichment ------------------------------------------------------
 
 
 @dataclass
@@ -158,7 +151,7 @@ def caption_estimate(
     input_tokens = image_input_tokens + CAPTION_PROMPT_TOKENS * items
     out_low = CAPTION_OUTPUT_TOKENS_LOW * items
     out_high = max_output_tokens * items
-    table = lookup(VISION_PRICES, model)
+    table = lookup(MODEL_PRICES, model)
     in_price = input_price_override if input_price_override is not None else (table[0] if table else None)
     out_price = output_price_override if output_price_override is not None else (table[1] if table else None)
     known = in_price is not None and out_price is not None
@@ -190,3 +183,43 @@ def caption_estimate(
             )
         ),
     )
+
+
+# -- what a run of chat models cost ------------------------------------------------------------------------
+
+
+def price_of(model: str) -> tuple[float, float] | None:
+    return lookup(MODEL_PRICES, model)
+
+
+def cost_breakdown(by_model: dict[str, Usage]) -> dict:
+    """-> {"usd": total of the priced models, "complete": every model had a price, "models": [...]}.
+    Cached input is billed at the full input price, so the figure is an upper bound when the
+    provider discounts cached tokens."""
+    models = []
+    total = 0.0
+    complete = True
+    for model, usage in sorted(by_model.items()):
+        price = price_of(model)
+        cost = None
+        if price is not None:
+            cost = (usage.input_tokens * price[0] + usage.output_tokens * price[1]) / 1_000_000
+            total += cost
+        else:
+            complete = False
+        models.append(
+            {
+                "model": model,
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "input_price": price[0] if price else None,
+                "output_price": price[1] if price else None,
+                "usd": cost,
+            }
+        )
+    return {"usd": total, "complete": complete, "models": models}
+
+
+def usd(value: float) -> str:
+    """$0.0912 for small sums, $12.34 from one dollar up."""
+    return f"${value:,.2f}" if value >= 1 else f"${value:.4f}"
