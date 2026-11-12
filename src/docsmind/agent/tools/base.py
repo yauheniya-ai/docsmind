@@ -51,7 +51,14 @@ class Tool:
     name: ClassVar[str]
     description: ClassVar[str]  # written for the model
     summary: ClassVar[str] = ""  # one plain sentence for people (shown in the UI)
+    how_it_works: ClassVar[tuple[str, ...]] = ()  # quick-reference steps for people (UI only, never sent to the model)
+    subagent_only: ClassVar[bool] = False  # True: never offered to the main executor, only to subagents that list it
     Args: ClassVar[type[BaseModel]]
+
+    @classmethod
+    def available(cls, config: DocsmindConfig) -> bool:
+        """False when the tool needs configuration that is missing (it is then not offered to the model)."""
+        return True
 
     async def run(self, args: Any, ctx: ToolContext) -> ToolOutput:  # pragma: no cover
         raise NotImplementedError
@@ -103,6 +110,7 @@ class ToolRegistry:
                 {
                     "name": n,
                     "description": tool.summary,
+                    "how_it_works": list(tool.how_it_works),
                     "instructions": spec.description,
                     "parameters": spec.parameters,
                 }
@@ -111,6 +119,14 @@ class ToolRegistry:
 
     def subset(self, names: tuple[str, ...] | list[str]) -> ToolRegistry:
         return ToolRegistry([t for n, t in self._tools.items() if n in names])
+
+    def for_executor(self) -> ToolRegistry:
+        """The tools the main executor may call: everything except subagent-only tools."""
+        return ToolRegistry([t for t in self._tools.values() if not t.subagent_only])
+
+    def configured(self, config: DocsmindConfig) -> ToolRegistry:
+        """Drops tools whose configuration is missing, so the model never sees a tool it cannot use."""
+        return ToolRegistry([t for t in self._tools.values() if t.available(config)])
 
     def specs(self) -> list[ToolSpec]:
         return [t.spec() for t in self._tools.values()]

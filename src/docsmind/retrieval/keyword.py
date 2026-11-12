@@ -5,7 +5,9 @@ from __future__ import annotations
 import re
 
 _TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
-MAX_QUERY_TERMS = 12
+# Safety bound only (keeps the tsquery a sane size for pathological input);
+# normal questions never get near it, and the vector side embeds the full text.
+MAX_QUERY_TERMS = 64
 
 
 def query_terms(text: str) -> list[str]:

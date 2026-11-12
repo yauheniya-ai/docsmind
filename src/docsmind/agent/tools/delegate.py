@@ -37,6 +37,11 @@ class DelegateTool(Tool):
         "short report with [S#] citations. Use for large or independent work; several delegate calls in "
         "one step run in parallel.\nSubagents:\n" + _ROSTER
     )
+    how_it_works = (
+        "The Mind picks a subagent and writes a self-contained task; the subagent never sees the conversation.",
+        "The subagent works in a fresh context with its own tools (search, grep, read_pages, get_outline) and cannot delegate further.",
+        "Only its short report comes back, with the same [S#] source handles. Several delegations in one step run in parallel.",
+    )
     Args = DelegateArgs
 
     async def run(self, args: DelegateArgs, ctx: ToolContext) -> ToolOutput:

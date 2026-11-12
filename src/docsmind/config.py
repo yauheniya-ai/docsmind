@@ -62,6 +62,13 @@ class DocsmindConfig(BaseSettings):
     agent_recent_turns: int = 4  # user/assistant pairs always kept verbatim
     agent_memory_enabled: bool = True
 
+    # --- web access (Change Analyzer only) ---
+    # Tavily API key (https://tavily.com). Unset = the `web_search` tool is not offered; `fetch_url`
+    # (read one public web page) needs no key and stays available.
+    web_search_api_key: str | None = None
+    web_timeout_s: float = 15.0  # per web request
+    web_fetch_max_bytes: int = 2_000_000  # page bytes read before giving up
+
     # --- ingestion ---
     chunk_size_tokens: int = 700
     chunk_overlap_tokens: int = 100

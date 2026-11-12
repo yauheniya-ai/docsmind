@@ -75,6 +75,7 @@ class DocsmindAgent:
         self._memory = memory
         self._query_embedder = None
         self.tools = tools or build_registry()
+        self.main_tools = self.tools.for_executor()
         self.builder = ContextBuilder(config)
         self._background: set[asyncio.Task] = set()
 
@@ -187,7 +188,7 @@ class DocsmindAgent:
                     "with citations that are verified against what it actually read."
                 ),
                 "model": self.config.llm_model,
-                "tools": self.tools.info(),
+                "tools": self.main_tools.info(),
             },
             "stages": [
                 {
@@ -403,11 +404,11 @@ class DocsmindAgent:
             delegate=self._make_delegate(llm, catalog, sources, usage, emit),
             embedder=self.query_embedder,
         )
-        bundle = self.builder.executor(state, self.tools.specs())
+        bundle = self.builder.executor(state, self.main_tools.specs())
         result = await run_tool_loop(
             llm=llm,
             bundle=bundle,
-            registry=self.tools,
+            registry=self.main_tools,
             ctx=tool_ctx,
             usage=usage,
             emit=emit,
@@ -482,7 +483,7 @@ class DocsmindAgent:
                 delegate=None,  # no recursion
                 embedder=self.query_embedder,
             )
-            registry = self.tools.subset(spec.tools)
+            registry = self.tools.subset(spec.tools).configured(self.config)
             bundle = self.builder.subagent(spec, task, sub_catalog, registry.specs())
 
             emit(AgentEvent(type="subagent_start", data={"id": sub_id, "name": spec.name, "task": task}))

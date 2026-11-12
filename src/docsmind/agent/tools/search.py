@@ -24,7 +24,14 @@ def format_passage(doc: CatalogDoc, handle: str, page_start: int | None, page_en
 
 
 class SearchArgs(BaseModel):
-    query: str = Field(min_length=2, description="Distinctive words to look for (not a full sentence).")
+    query: str = Field(
+        min_length=2,
+        max_length=1000,
+        description=(
+            "Natural-language query: a question or a descriptive phrase. "
+            "Use grep instead for exact wording, identifiers or clause numbers."
+        ),
+    )
     documents: list[str] | None = Field(default=None, description=_DOCUMENTS_HELP)
     limit: int = Field(default=6, ge=1, le=10, description="Maximum passages to return.")
 
@@ -32,14 +39,19 @@ class SearchArgs(BaseModel):
 class SearchTool(Tool):
     name = "search"
     summary = (
-        "Searches the documents by keywords, and by meaning once they have been embedded. "
-        "Returns the best matching passages to cite."
+        "Hybrid search over the documents: stemmed keyword matching plus semantic (embedding) similarity, "
+        "fused by reciprocal rank fusion. Returns the best matching passages to cite."
     )
     description = (
-        "Search the documents' text (and figure captions, if images were captioned). Matches by "
-        "stemmed keywords, plus by meaning when the documents have been embedded, so paraphrases can "
-        "match too. Returns the best passages, each with a source handle like [S1] to cite; use "
-        "read_pages on a hit to see the surrounding text."
+        "Find passages by topic or meaning in the documents' text and figure captions. Takes a "
+        "natural-language query; matches keywords and paraphrases, ranked best first. Returns passages "
+        "with a source handle like [S1] to cite; use read_pages to see the surrounding text. "
+    )
+    how_it_works = (
+        "Keyword search: the query is stemmed and matched with Postgres full-text search.",
+        "Semantic search: the query is embedded and the nearest passages are found by cosine similarity (skipped if the documents are not embedded).",
+        "Reciprocal rank fusion: each list scores a passage 1 / (60 + rank) and the scores are added, so passages ranked well by both come first.",
+        "The top passages come back with source handles to cite.",
     )
     Args = SearchArgs
 
@@ -101,6 +113,11 @@ class GrepTool(Tool):
     description = (
         "Find an exact phrase, clause number or identifier (case-insensitive, literal match, no stemming). "
         "Returns the pages containing it, each with a source handle to cite."
+    )
+    how_it_works = (
+        "Escapes the text and runs a case-insensitive substring match (ILIKE) over every page of the chosen documents.",
+        "No stemming and no ranking: only literal matches, in document and page order.",
+        "Returns a snippet around the first hit on each page, with the number of occurrences and a source handle.",
     )
     Args = GrepArgs
 

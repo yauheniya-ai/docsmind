@@ -35,10 +35,11 @@ CHANGE_ANALYZER = SubagentSpec(
     role="Version comparison",
     description=(
         "Compares two versions of a document (or two related documents) and reports what was "
-        "added, removed or reworded, section by section, with citations on both sides."
+        "added, removed or reworded, section by section, with citations on both sides. It first "
+        "looks for a changelog in the documents and, when web access is configured, online."
     ),
     prompt=prompts.CHANGE_ANALYZER,
-    tools=("search", "grep", "read_pages", "get_outline"),
+    tools=("search", "grep", "read_pages", "get_outline", "web_search", "fetch_url"),
 )
 
 SUBAGENTS: dict[str, SubagentSpec] = {s.name: s for s in (RESEARCHER, CHANGE_ANALYZER)}

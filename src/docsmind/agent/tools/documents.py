@@ -20,6 +20,10 @@ class ListDocumentsTool(Tool):
     name = "list_documents"
     summary = "Lists the documents in the register with their collection, version and size."
     description = "List the documents in the register with their handles, collection, version label, page and word counts."
+    how_it_works = (
+        "Reads the catalog built for this conversation (no database query).",
+        "Returns each document's handle (D1, D2, ...), title, collection, version, and page and word counts.",
+    )
     Args = ListDocumentsArgs
 
     async def run(self, args: ListDocumentsArgs, ctx: ToolContext) -> ToolOutput:
@@ -36,6 +40,11 @@ class OutlineTool(Tool):
     description = (
         "The document's table of contents (from the PDF's own bookmarks) with page numbers. "
         "Use it to find which pages cover a topic, then read_pages."
+    )
+    how_it_works = (
+        "Loads the document's sections, taken from the PDF's own bookmarks.",
+        "Lists them indented by depth, each with its page number (up to 200 entries).",
+        "If the PDF has no bookmarks, it says so and the model falls back to search.",
     )
     Args = OutlineArgs
 
@@ -73,6 +82,11 @@ class ReadPagesTool(Tool):
     description = (
         "Read the full text of one or a few consecutive pages of a document. Each chunk comes with a "
         "source handle to cite."
+    )
+    how_it_works = (
+        "Checks the page range: at most 4 pages per call, and within the document.",
+        "Loads every text chunk that overlaps those pages.",
+        "Returns the full text, each chunk with a source handle to cite.",
     )
     Args = ReadPagesArgs
 
