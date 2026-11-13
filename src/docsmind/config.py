@@ -93,7 +93,6 @@ class DocsmindConfig(BaseSettings):
     # broke) is relaunched this many times before the row is left unverified.
     change_verify_max_retries: int = 3
     change_changelog_max_steps: int = 8  # tool-loop steps for the changelog search
-    change_report_max_chars: int = 12_000  # report text handed back to the Mind
     change_vision_dpi: int = 130  # resolution of page images for `page_vision`
     change_vision_max_output_tokens: int = 1_500  # per `page_vision` answer
     change_table_max_bytes: int = 10_000_000  # largest spreadsheet `load_table` downloads

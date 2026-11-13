@@ -17,13 +17,13 @@ from docsmind.agent import prompts
 from docsmind.agent.catalog import Catalog, CatalogDoc
 from docsmind.agent.subagents.change_analysis.env import RunEnv
 from docsmind.agent.subagents.change_analysis.rows import extract_json, row_for_model
+from docsmind.agent.subagents.specs import CHANGELOG_LOCAL_TOOLS as LOCAL_TOOLS
+from docsmind.agent.subagents.specs import CHANGELOG_WEB_TOOLS as WEB_TOOLS
 from docsmind.agent.tools.base import Emit
 from docsmind.domain.changes import ChangeRow
 
 log = logging.getLogger(__name__)
 
-LOCAL_TOOLS = ("get_outline", "read_pages", "grep", "search")
-WEB_TOOLS = ("web_search", "fetch_url", "load_table")
 MAX_ENTRIES = 80
 KINDS = {"new", "modified", "removed", "other"}
 

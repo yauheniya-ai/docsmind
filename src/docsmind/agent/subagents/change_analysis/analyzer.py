@@ -258,7 +258,13 @@ class ChangeAnalyzer:
                 stats=stats,
                 changelog_mode=changelog_mode,
             )
-            meta = {**stats, "parts": len(parts)}
+            meta = {
+                **stats,
+                "parts": len(parts),
+                "current_title": a_doc.title,
+                "previous_title": b_doc.title,
+                "models": self._models_by_stage(),
+            }
             await env.changes.update_analysis(analysis.id, status="done", report=report, meta=meta)
             self._emit("analysis_done", id=str(analysis.id), status="done", counts=counts(rows))
         except asyncio.CancelledError:
@@ -272,6 +278,19 @@ class ChangeAnalyzer:
                 changelog_task.cancel()
 
         return self._summary(analysis, a_doc, b_doc, mode, rows, report)
+
+    # -- verify rows of an existing table ---------------------------------------------------------------
+
+    def _models_by_stage(self) -> dict[str, str]:
+        """Which model did which job (for the Info sheet of the Excel export)."""
+        env = self.env
+        return {
+            "versions check and changelog matching": env.fast_llm.model,
+            "scan": env.scan_llm.model,
+            "verification, changelog search and report": env.llm.model,
+            "page vision": env.config.resolved_vision_model,
+            "search embeddings": env.config.embedding_model,
+        }
 
     # -- verify rows of an existing table ---------------------------------------------------------------
 
@@ -486,16 +505,32 @@ class ChangeAnalyzer:
             log.exception("Could not record the end of analysis %s", analysis_id)
 
     def _summary(self, analysis: ChangeAnalysis, a: CatalogDoc, b: CatalogDoc, mode: str, rows: list[ChangeRow], report: str) -> str:
+        """What the Mind gets back: a short status, built in code. The table and the report are shown
+        next to the chat, so the Mind must not re-describe them."""
         c = counts(rows)
-        head = [
-            f"Change analysis {analysis.id} is complete and shown next to the chat (the table and the full report).",
+        if not rows:
+            overall = "The two documents are versions of the same document, and no substantive changes were found."
+        elif mode == "changelog":
+            overall = (
+                f"The second document is the changelog of the first; it lists {c['total']} changes, "
+                f"{c['actionable']} of them compliance-relevant."
+            )
+        else:
+            overall = (
+                f"These are two versions of the same document, with {c['total']} changes, "
+                f"{c['actionable']} of them compliance-relevant."
+            )
+        lines = [
+            f"Change analysis {analysis.id} is complete: a detailed table and a full report are open next to the chat.",
             f"A (current) = {a.handle} · {a.title} ({a.label}); B (previous) = {b.handle} · {b.title} ({b.label}); mode: {mode}.",
-            (
-                f"{c['total']} changes: {c['new']} new, {c['modified']} modified, {c['removed']} removed, "
-                f"{c['editorial']} editorial, {c['relocated']} relocated; "
-                f"{c['actionable']} compliance-relevant, {c['verified']} verified."
-            ),
+            f"{c['total']} changes: {c['actionable']} compliance-relevant, {c['verified']} verified.",
+            f"Overall judgement: {overall}",
         ]
-        text = "\n".join(head) + "\n\n" + report
-        limit = self.env.config.change_report_max_chars
-        return text if len(text) <= limit else text[: limit - 1] + "…"
+        if analysis.verdict_note:
+            lines.append(f"Note: {analysis.verdict_note}")
+        lines.append(
+            "Reply in one or two short sentences: the Change Analyzer finished, composed the analysis table and "
+            "the report, which can be opened next to the chat, plus the overall judgement. Do not list the changes "
+            "and do not cite sources."
+        )
+        return "\n".join(lines)

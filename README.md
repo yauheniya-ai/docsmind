@@ -124,10 +124,10 @@ galleries of everything extracted from it (**Images**, **Tables**).
 For contributors refreshing bundled UI assets before a release:
 
 ```bash
-cd ../frontend
+cd frontend
 npm install
 npm run build
-cd ../docsmind
+cd ..
 python scripts/bundle_frontend.py
 ```
 
@@ -308,8 +308,8 @@ src/docsmind/
 alembic/   tests/   examples/   docs/
 ```
 
-The UI source lives one level up as a sibling project: `frontend/` (React + TypeScript +
-TailwindCSS, see the repo-root `CLAUDE.md`). Release builds are bundled into
+The UI source lives in this repository under `frontend/` (React + TypeScript +
+TailwindCSS). Release builds are bundled into
 `src/docsmind/server/ui` and served by `server/app.py` at `/`. The UI talks to `server/`
 over `/api/*`, and loads extracted images/tables straight from disk via `/blobs/*`.
 

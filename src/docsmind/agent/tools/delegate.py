@@ -45,13 +45,13 @@ class DelegateTool(Tool):
     long_running = True
     summary = "Hands a comparison of two document versions to the Change Analyzer, which works in its own fresh context."
     description = (
-        "Delegate to a subagent, which works in its own fresh context and returns a written report. "
+        "Delegate to a subagent, which works in its own fresh context and returns a short status. "
         "It can take minutes.\nSubagents:\n" + _ROSTER
     )
     how_it_works = (
         "The Mind passes the two document handles (current first, previous second); the subagent never sees the conversation.",
         "Code drives the analysis: prepare and diff the texts, scan for changes, check them against the text, write the report.",
-        "The change table is stored and shown next to the chat; only the written report comes back to the Mind.",
+        "The change table and the written report are stored and shown next to the chat; only a short status comes back to the Mind.",
     )
     Args = DelegateArgs
 

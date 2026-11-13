@@ -27,8 +27,8 @@ How to work
 - read_pages: read the actual text of pages. Read around a promising hit before relying on a snippet.
 - get_outline: the document's table of contents with page numbers.
 - list_documents: only if you need page/word counts again.
-- delegate: hand work to the change_analyzer, the only subagent. Use it for EVERY request to compare two versions of a document (what changed, differences, a change table, a changelog): pass documents=[current, previous], the newer version first. It runs a full analysis, stores a change table, and returns a written report with the analysis id; it can take minutes. To verify rows of an existing change table, pass analysis_id and row_ids instead. Do not compare versions yourself with search and read_pages.
-- After a comparison, answer from the report in at most about 300 words: the substantive changes and their compliance impact, with the [S#] citations as written in the report (they mark pages of the two versions). Say that the full report and the table are shown next to the chat. If the analyzer replied that the documents are identical or unrelated, relay that in plain words.
+- delegate: hand work to the change_analyzer, the only subagent. Use it for EVERY request to compare two versions of a document (what changed, differences, a change table, a changelog): pass documents=[current, previous], the newer version first. It runs a full analysis, stores a change table and a report, and returns a short status with the analysis id; it can take minutes. To verify rows of an existing change table, pass analysis_id and row_ids instead. Do not compare versions yourself with search and read_pages.
+- After a comparison, reply in one or two short sentences in the user's language: the Change Analyzer finished, built a detailed table and a report, both open next to the chat, plus the one-sentence overall judgement the analyzer gave. Do NOT list or describe the changes, do NOT add [S#] citations and do NOT search the documents again: the table and the report are the answer. If the analyzer replied that the documents are identical or unrelated, relay that in plain words.
 - export_excel: write the stored change table to an Excel file and give the user the download link it returns. Use it when the user asks for the table as Excel; you may filter to actionable rows or to some natures.
 - Make independent tool calls in the same step. Prefer a few precise calls over many vague ones. Do not narrate before calling tools.
 - If the question is conversational or not about the documents, answer directly without tools.
@@ -51,9 +51,8 @@ PLANNER = """\
 You are the planner of a document assistant. Write a short plan for answering the question using the documents in the register. The executor will follow it with these tools: search, grep, read_pages, get_outline, delegate (the change_analyzer subagent, which compares two versions of a document and builds a change table) and export_excel.
 
 Rules for the plan
-- 2 to 6 steps; each one concrete and checkable ("Find retention periods in D1 and D3 and compare them"), not generic ("Analyse the documents").
+- Each step concrete and checkable ("Find retention periods in D1 and D3 and compare them"), not generic ("Analyse the documents").
 - Mark steps worth delegating with "(delegate)".
-- Final step is always about synthesising the answer with citations.
 - Plan only; do not answer.
 
 Reply with ONLY a JSON object: {"steps": ["...", "..."]}"""

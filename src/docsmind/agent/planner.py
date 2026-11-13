@@ -13,8 +13,6 @@ from docsmind.domain.ports import LLM
 
 log = logging.getLogger(__name__)
 
-MAX_STEPS = 6
-
 
 class Planner:
     def __init__(self, llm: LLM, builder: ContextBuilder) -> None:
@@ -24,7 +22,7 @@ class Planner:
     async def plan(self, state: TurnState, usage: Usage) -> Plan | None:
         bundle = self.builder.planner(state)
         try:
-            response = await self.llm.complete(bundle.messages, system=bundle.system, max_tokens=500)
+            response = await self.llm.complete(bundle.messages, system=bundle.system, max_tokens=2_000)
         except Exception:
             log.exception("Planner call failed; continuing without a plan")
             return None
@@ -34,5 +32,5 @@ class Planner:
         raw = data.get("steps")
         if not isinstance(raw, list):
             return None
-        steps = [" ".join(s.split()) for s in raw if isinstance(s, str) and s.strip()][:MAX_STEPS]
+        steps = [" ".join(s.split()) for s in raw if isinstance(s, str) and s.strip()]
         return Plan(steps=steps) if steps else None

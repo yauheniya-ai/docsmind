@@ -10,6 +10,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
+from pydantic import BaseModel, Field
 
 from docsmind.domain.errors import DocumentAlreadyExistsError
 
@@ -143,6 +144,29 @@ async def get_document(request: Request, version_id: UUID) -> dict:
         detail["word_count"] = len(text.split())
     detail["token_count"] = _count_tokens(text)
     return detail
+
+
+class DocumentPatch(BaseModel):
+    """What is normally given at ingest time. A field that is left out stays as it is."""
+
+    title: str | None = Field(default=None, max_length=300)
+    collection: str | None = Field(default=None, max_length=200)
+    label: str | None = Field(default=None, max_length=100)
+
+
+@router.patch("/documents/{version_id}")
+async def edit_document(request: Request, version_id: UUID, body: DocumentPatch) -> dict:
+    """Rename the title and collection (kept on the document) and the version label."""
+    values = {k: v.strip() for k, v in body.model_dump(exclude_none=True).items()}
+    if not values:
+        raise HTTPException(status_code=422, detail="Nothing to change: give a title, collection or version.")
+    empty = [k for k, v in values.items() if not v]
+    if empty:
+        raise HTTPException(status_code=422, detail=f"{', '.join(empty)} cannot be empty.")
+    repo = _repo(request)
+    if not await repo.update_version_metadata(version_id, **values):
+        raise HTTPException(status_code=404, detail="Version not found.")
+    return await get_document(request, version_id)
 
 
 @router.delete("/documents/{version_id}")

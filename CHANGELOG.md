@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] - 2026-11-13
+
+### Added
+
+- Edit a document after ingest: the document page lets you change the title, the collection and
+  the version label, which are normally set at ingest. New route
+  `PATCH /api/documents/{version_id}` (any subset of `title`, `collection`, `label`; empty
+  values are rejected with 422, an unknown version with 404) and
+  `PostgresRepository.update_version_metadata`. Title and collection are kept on the document,
+  the label on the version.
+- The Agents diagram shows the Change Analyzer's pipeline as stages (versions check, scan,
+  changelog search, row verification, report). Each stage opens a details panel with its
+  description, its prompt, the model it runs on (main, fast or scan), its limit and the tools
+  its loop may call. Backed by `StageSpec` and `SubagentSpec.stages` in
+  `agent/subagents/specs.py`.
+- The frontend source (`frontend/`) now lives in this repository, so a clone is enough to
+  continue work on the UI on another machine (`cd frontend && npm install && npm run build`).
+
+### Changed
+
+- The planner is no longer limited to 2-6 steps: the "2 to 6 steps" rule and the "final step is
+  always about synthesising the answer" rule are gone from its prompt, `MAX_STEPS` is gone from
+  the code, and the plan call may use up to 2,000 output tokens (was 500) so a longer plan is
+  not cut off.
+- A change table keeps the titles of its two documents (`current_title`, `previous_title`) with
+  the analysis, so the Excel "Info" sheet, the file names and the report keep the title the
+  documents had when they were compared.
+
+
 ## [0.8.0] - 2026-11-12
 
 ### Added
@@ -25,11 +54,33 @@ All notable changes to this project will be documented in this file.
   5. searches for a changelog in parallel (in the documents, and online for public ones) and
      checks the entries that no row explains;
   6. writes a report: narrative from the model, every countable section built by code. Page
-     references in it ("A p.12") are clickable and open that page of that version; in the Mind's
-     answer they become `[S#]` citations.
+     references in it ("A p.12") are clickable and open that page of that version.
+- After a comparison the Mind answers in one or two short sentences: the Change Analyzer finished,
+  built a detailed table and a report that open next to the chat, plus one overall judgement
+  composed in code. It no longer re-describes the changes or adds its own page sources; the
+  Analyzer hands back a short status instead of the report (`DOCSMIND_CHANGE_REPORT_MAX_CHARS` is gone).
 - Change tables are stored (migration `0005`: `change_analyses`, `change_rows`) with a verified
   flag, proof passages with pages and a human approved flag. Run `docsmind db upgrade`.
 - Routes `/api/changes`: read an analysis, add, edit and delete rows, Excel export.
+  The file is named `yyyymmdd-<title of document A>-change-table.xlsx`, the header rows use the
+  accent color with white text, and a second sheet "Info" lists the two documents, date,
+  duration, tokens, cost and the model used for each stage.
+- The report downloads on its own as Word (`.docx`) or Markdown (`yyyymmdd-<title>-change-report.*`),
+  with the title "Change analysis", the two documents and what was compared in front. The panel
+  shows Excel on the Table tab (table and Info) and Word / Markdown on the Report tab; the report
+  view starts with the same title and a normal-size "what is compared" paragraph instead of the
+  small gray italic note. New dependency: `python-docx`.
+- `POST /api/changes/{id}/verify` and `DocsmindAgent.verify_rows`: a person runs the Change Analyzer's
+  verification directly on any row of the table (star in the row, "Verify" in the row details, or
+  the footer button), not through the Mind. A row it cannot prove stays in the table, unverified,
+  with the reason. The panel no longer says "Ask the Mind to verify", and a verified row shows
+  "Verified" instead of a verify button.
+- The approval box uses the accent color and asks "Approve this row? Yes / No" first.
+
+### Fixed
+
+- A proof's page is looked up in the stored text when the verifier gives none or a wrong one, so
+  proofs carry "A p.4" and open the document at that page.
 - Tools: `page_vision` (a vision model reads a page image), `load_table` (xlsx/csv from a URL,
   parsed in code) for the Change Analyzer; `export_excel` for the Mind.
 - `docsmind diff` now prints the table and report; `--actionable` and `--xlsx` options.
@@ -150,7 +201,7 @@ All notable changes to this project will be documented in this file.
 
 - Bundled frontend UI in the Python package: release UI assets are copied into
   `src/docsmind/server/ui` and served by `docsmind serve` at `/`.
-- `scripts/bundle_frontend.py` helper to copy `../frontend/dist` into the package
+- `scripts/bundle_frontend.py` helper to copy `frontend/dist` into the package
   before publishing.
 - `docsmind delete <version-id> [-y]` command to remove one ingested version and
   its derived sections/chunks/images/tables.

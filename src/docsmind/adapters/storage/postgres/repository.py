@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from uuid import UUID
 
-from sqlalchemy import Text, bindparam, cast, delete, func, insert, select, text
+from sqlalchemy import Text, bindparam, cast, delete, func, insert, select, text, update
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
@@ -638,6 +638,37 @@ class PostgresRepository:
             )
             await session.commit()
             return result.rowcount > 0
+
+    async def update_version_metadata(
+        self,
+        version_id: UUID,
+        *,
+        title: str | None = None,
+        collection: str | None = None,
+        label: str | None = None,
+    ) -> bool:
+        """Rename what is normally given at ingest time: the version `label` (on the version) and the
+        `title` / `collection` (on its parent document). A value of None is left as it is. Returns
+        False if `version_id` does not exist."""
+        async with self._sessionmaker() as session:
+            found = (
+                await session.execute(
+                    select(document_versions_table.c.document_id).where(document_versions_table.c.id == version_id)
+                )
+            ).first()
+            if found is None:
+                return False
+            document_fields = {k: v for k, v in (("title", title), ("collection", collection)) if v is not None}
+            if document_fields:
+                await session.execute(
+                    update(documents_table).where(documents_table.c.id == found[0]).values(**document_fields)
+                )
+            if label is not None:
+                await session.execute(
+                    update(document_versions_table).where(document_versions_table.c.id == version_id).values(label=label)
+                )
+            await session.commit()
+            return True
 
     async def get_full_text(self, version_id: UUID) -> str | None:
         async with self._sessionmaker() as session:

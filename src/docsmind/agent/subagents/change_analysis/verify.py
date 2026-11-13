@@ -19,6 +19,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
+from itertools import pairwise
 from typing import Literal
 
 from docsmind.agent import prompts
@@ -29,12 +30,12 @@ from docsmind.agent.subagents.change_analysis.rows import (
     row_for_model,
     row_from_object,
 )
+from docsmind.agent.subagents.specs import VERIFY_TOOLS
 from docsmind.domain.changes import ChangeRow, Nature, Proof
 from docsmind.domain.errors import LLMConfigurationError
 
 log = logging.getLogger(__name__)
 
-VERIFY_TOOLS = ("search", "grep", "read_pages", "page_vision")
 MIN_FRAGMENT = 8  # characters; shorter pieces of a proof are not evidence
 MAX_PROOF_CHARS = 1_500
 
@@ -55,6 +56,8 @@ def squash(text: str) -> str:
 class DocText:
     doc: CatalogDoc
     squashed: str
+    # (first page, squashed text) of every chunk, loaded when a proof's page has to be looked up
+    chunk_texts: list[tuple[int, str]] | None = None
 
 
 def contains_verbatim(passage: str, haystack: str) -> bool:
@@ -240,10 +243,32 @@ async def _checked_proofs(env: RunEnv, raw, a: DocText, b: DocText, vision: str)
             continue
         page = item.get("page")
         page = page if isinstance(page, int) and page > 0 else None
-        if page is not None and in_text and not await _page_holds(env, side.doc, page, text):
-            page = None  # the passage is there, but not where the model says
+        if in_text and (page is None or not await _page_holds(env, side.doc, page, text)):
+            # The model gave no page, or not the right one: the page is a fact of the stored text,
+            # so it is looked up in code instead of being left out.
+            page = await _find_page(env, side, text)
         proofs.append(Proof(doc=key, text=text, page=page))  # type: ignore[arg-type]
     return proofs, dropped
+
+
+async def _find_page(env: RunEnv, side: DocText, text: str) -> int | None:
+    """The first page of the chunk that holds `text` (or of two neighbouring chunks, for a passage
+    that runs over a chunk border). None when no chunk holds it, e.g. text a vision model read."""
+    if side.chunk_texts is None:
+        try:
+            chunks = await env.repo.get_chunks_for_pages(side.doc.version_id, 1, side.doc.page_count or 10_000)
+        except Exception:
+            log.exception("Page lookup failed")
+            return None
+        side.chunk_texts = [(int(c.get("page_start") or 0), squash(c.get("content") or "")) for c in chunks]
+    texts = side.chunk_texts
+    for page, content in texts:
+        if page and contains_verbatim(text, content):
+            return page
+    for (page, first), (_, second) in pairwise(texts):
+        if page and contains_verbatim(text, f"{first} {second}"):
+            return page
+    return None
 
 
 async def _page_holds(env: RunEnv, doc: CatalogDoc, page: int, text: str) -> bool:

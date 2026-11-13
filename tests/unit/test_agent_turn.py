@@ -286,3 +286,13 @@ def test_describe_gives_the_ui_plain_tool_summaries_and_stages(config, llm, repo
         assert all(t["description"] for t in sub["tools"])
 
     assert [s["name"] for s in info["stages"]] == ["router", "planner"]
+
+    analyzer = next(s for s in info["subagents"] if s["name"] == "change_analyzer")
+    assert [s["name"] for s in analyzer["stages"]] == ["versions_check", "scan", "changelog", "verify", "report"]
+    scan = analyzer["stages"][1]
+    assert scan["system_prompt"] and scan["model"] and scan["budget"]
+    assert scan["tools"] == []  # the scan is one model call: no tools
+    by_stage = {s["name"]: [t["name"] for t in s["tools"]] for s in analyzer["stages"]}
+    assert by_stage["verify"] == ["search", "grep", "read_pages", "page_vision"]
+    assert "web_search" in by_stage["changelog"] and "web_search" not in by_stage["verify"]
+    assert by_stage["versions_check"] == by_stage["report"] == []

@@ -30,7 +30,6 @@ from docsmind.agent.planner import Planner
 from docsmind.agent.sources import SourceRegistry, finalize_citations
 from docsmind.agent.subagents.change_analysis.analyzer import ChangeAnalyzer
 from docsmind.agent.subagents.change_analysis.env import RunEnv
-from docsmind.agent.subagents.change_analysis.report import cite_pages
 from docsmind.agent.subagents.specs import SUBAGENTS
 from docsmind.agent.tools import ToolContext, ToolRegistry, build_registry
 from docsmind.agent.tools.base import Emit
@@ -42,7 +41,7 @@ from docsmind.domain.agent import (
     StoredMessage,
     Usage,
 )
-from docsmind.domain.changes import ChangeResult
+from docsmind.domain.changes import ChangeResult, ChangeRow
 from docsmind.domain.errors import (
     AgentError,
     ConversationNotFoundError,
@@ -185,6 +184,11 @@ class DocsmindAgent:
     def describe(self) -> dict:
         """Static description of the agent and its subagents, for the UI."""
         fast = self.config.agent_fast_model or self.config.llm_model
+        stage_models = {
+            "main": self.config.llm_model,
+            "fast": fast,
+            "scan": self.config.change_scan_model or self.config.llm_model,
+        }
         register = {
             "label": "Document register",
             "text": "The register (documents you may use):\n<one line per document: handle, title, pages, words ...>",
@@ -278,6 +282,20 @@ class DocsmindAgent:
                     "description": spec.description,
                     "model": self.config.llm_model,
                     "tools": self.tools.info(spec.tools),
+                    "stages": [
+                        {
+                            "name": stage.name,
+                            "role": stage.role,
+                            "system_prompt": stage.prompt,
+                            "context": [register] if stage.name in ("changelog", "verify") else [],
+                            "user_prompt": stage.user_prompt,
+                            "description": stage.description,
+                            "model": stage_models[stage.model],
+                            "budget": stage.budget,
+                            "tools": self.tools.info(stage.tools),
+                        }
+                        for stage in spec.stages
+                    ],
                 }
                 for spec in SUBAGENTS.values()
             ],
@@ -365,6 +383,21 @@ class DocsmindAgent:
             return ChangeResult(message=message)
         analysis = await self.changes.get_analysis(analyzer.analysis_id)
         return ChangeResult(message=message, analysis=analysis, rows=await self.changes.list_rows(analyzer.analysis_id))
+
+    async def verify_rows(self, analysis_id: UUID, row_ids: list[UUID], *, notes: str = "") -> list[ChangeRow]:
+        """Run the Change Analyzer's verification on rows of a stored table, without a chat: what the
+        "Verify" button of the table does. Any row can be checked; a row that cannot be proven stays
+        in the table, unverified, with the reason. -> the rows as they are afterwards."""
+        analysis = await self.changes.get_analysis(analysis_id)
+        if analysis is None:
+            raise AgentError("That change analysis does not exist.")
+        rows = await self.repo.list_catalog([analysis.current_version_id, analysis.previous_version_id])
+        catalog = Catalog.from_rows(rows)
+        env = self._make_env(lambda _event: None, SUBAGENTS["change_analyzer"].tools)
+        analyzer = ChangeAnalyzer(env, catalog)
+        await analyzer.verify_existing(analysis_id, [str(r) for r in row_ids])
+        out = [await self.changes.get_row(r) for r in row_ids]
+        return [r for r in out if r is not None]
 
     def _make_env(self, emit: Emit, tool_names: tuple[str, ...]) -> RunEnv:
         return RunEnv(
@@ -578,28 +611,11 @@ class DocsmindAgent:
                 docs = catalog.resolve_many(documents)
                 if len(docs) != 2:
                     raise ToolInputError("Pass exactly two documents: [current, previous].")
-                report = await analyzer.compare(docs[0], docs[1], task)
-                return await self._cite_report_pages(report, analyzer, catalog, sources)
+                return await analyzer.compare(docs[0], docs[1], task)
             finally:
                 usage.add(env.usage)
 
         return delegate
-
-    async def _cite_report_pages(
-        self, report: str, analyzer: ChangeAnalyzer, catalog: Catalog, sources: SourceRegistry
-    ) -> str:
-        """"(A p.12)" in the report -> `[S#]` sources of the Mind's turn, so its answer carries
-        clickable citations that open the page."""
-        if analyzer.analysis_id is None:
-            return report
-        analysis = await self.changes.get_analysis(analyzer.analysis_id)
-        if analysis is None:
-            return report
-        current = catalog.by_version(analysis.current_version_id)
-        previous = catalog.by_version(analysis.previous_version_id)
-        if current is None or previous is None:
-            return report
-        return await cite_pages(report, a=current, b=previous, repo=self.repo, registry=sources)
 
     def _spawn(self, coro) -> None:
         task = asyncio.create_task(coro)

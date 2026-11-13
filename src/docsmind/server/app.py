@@ -54,7 +54,7 @@ def create_app(config: DocsmindConfig | None = None) -> FastAPI:
     async def health() -> dict:
         return {"status": "ok"}
 
-    # Bundled frontend UI (copied from ../frontend/dist into
+    # Bundled frontend UI (copied from frontend/dist into
     # src/docsmind/server/ui at release time). If absent, the API still works
     # exactly as before.
     ui_root = Path(__file__).resolve().parent / "ui"

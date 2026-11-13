@@ -6,20 +6,16 @@ methodology note built from the run's real numbers, and the AI disclaimer. Nothi
 left to the model. Candidate rows that could not be proven are simply not in the table: they are
 neither reported nor stored.
 
-Pages are cited as "(A p.12)" (A = current version, B = previous). The UI turns them into links;
-`cite_pages` turns them into `[S#]` citations for the Mind's answer.
+Pages are cited as "(A p.12)" (A = current version, B = previous); the UI turns them into links.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any
 
 from docsmind.agent import prompts
-from docsmind.agent.catalog import CatalogDoc
-from docsmind.agent.sources import SourceRegistry
 from docsmind.agent.subagents.change_analysis.env import RunEnv
 from docsmind.domain.changes import ChangeAnalysis, ChangeRow, Nature
 from docsmind.pricing import usd
@@ -232,46 +228,3 @@ async def build_report(
         f"*{prompts.REPORT_DISCLAIMER}*",
     ]
     return "\n\n".join(s for s in sections if s)
-
-
-# -- page references as citations --------------------------------------------------------------
-
-_PAGE_GROUP = re.compile(r"\(\s*((?:[AB] p\.\d+\s*(?:,\s*)?)+)\s*\)")
-_PAGE_TOKEN = re.compile(r"([AB]) p\.(\d+)")
-
-
-async def cite_pages(text: str, *, a: CatalogDoc, b: CatalogDoc, repo: Any, registry: SourceRegistry) -> str:
-    """"(A p.12, B p.9)" -> "[S3][S4]": each page becomes a source in `registry` (the Mind's), so the
-    answer it writes carries real, clickable citations that open the page. A page the repository
-    cannot find keeps its plain text."""
-    docs = {"A": a, "B": b}
-    handles: dict[tuple[str, int], str] = {}
-    for side, number in sorted({(s, int(n)) for s, n in _PAGE_TOKEN.findall(text)}):
-        doc = docs[side]
-        try:
-            chunks = await repo.get_chunks_for_pages(doc.version_id, number, number)
-        except Exception:  # a citation is a nicety: keep the plain text
-            log.exception("Could not look up %s p.%d for a citation", side, number)
-            continue
-        if not chunks:
-            continue
-        chunk = chunks[0]
-        citation = registry.add(
-            chunk_id=chunk["chunk_id"],
-            version_id=doc.version_id,
-            title=doc.title,
-            collection=doc.collection,
-            label=doc.label,
-            page_start=chunk.get("page_start"),
-            page_end=chunk.get("page_end"),
-            snippet=" ".join((chunk.get("content") or "").split()),
-        )
-        handles[(side, number)] = str(citation.handle)
-
-    def replace(match: re.Match[str]) -> str:
-        found = [handles.get((s, int(n))) for s, n in _PAGE_TOKEN.findall(match.group(1))]
-        if not all(found):
-            return match.group(0)
-        return "".join(f"[{h}]" for h in dict.fromkeys(found))
-
-    return _PAGE_GROUP.sub(replace, text)

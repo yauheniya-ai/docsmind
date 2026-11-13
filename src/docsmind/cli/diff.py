@@ -19,7 +19,7 @@ def diff(
 ) -> None:
     """Compare two versions of a document: a change table plus a written report."""
     from docsmind import Docsmind
-    from docsmind.agent.subagents.change_analysis.export import rows_to_xlsx
+    from docsmind.agent.subagents.change_analysis.export import info_rows, rows_to_xlsx
 
     result = Docsmind().compare(version_a, version_b)
     if result.analysis is None:
@@ -43,5 +43,7 @@ def diff(
     console.print(table)
     console.print(Markdown(result.analysis.report or result.message))
     if xlsx is not None:
-        xlsx.write_bytes(rows_to_xlsx(rows))
+        meta = result.analysis.meta
+        info = info_rows(result.analysis, meta.get("current_title", ""), meta.get("previous_title", ""), result.rows)
+        xlsx.write_bytes(rows_to_xlsx(rows, info))
         console.print(f"Wrote {xlsx}")
