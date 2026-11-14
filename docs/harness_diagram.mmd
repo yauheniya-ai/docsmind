@@ -18,7 +18,7 @@ flowchart TB
     end
 
     U["User / App<br/>goal or request"]
-    EV["8 · Evals<br/>golden sets, trajectory vs outcome,<br/>LLM-as-judge, regression tests"]
+    EV["8 · Evals<br/>golden sets: published changelogs and change tables<br/>downloaded online, compared with Change Analyzer results;<br/>missing: trajectory vs outcome, LLM-as-judge, regression tests"]
 
     subgraph H["1 · Harness Engineering: full, safe, observable stack"]
         G["7 · Guardrails & Permissions<br/>read-only tools, untrusted-data rule, verified citations;<br/>still missing: I/O filtering, scoped access"]
@@ -32,7 +32,7 @@ flowchart TB
         T["4 · Tool Design<br/>clear names, strict schemas,<br/>helpful errors, fewer tools"]
         M["5 · Memory<br/>short-term, long-term, semantic<br/>retrieve and write"]
         O["6 · Orchestration<br/>router/orchestrator, handoffs,<br/>parallel vs sequential"]
-        HITL["9 · Human-in-the-Loop<br/>approval gates, feedback,<br/>spot checks"]
+        HITL["9 · Human-in-the-Loop<br/>Change Analyzer: a person approves, edits, adds<br/>and deletes table rows and runs row verification;<br/>missing: approval gates for the Mind's own actions"]
         OBS["10 · Observability & Tracing<br/>live activity trace and saved conversations;<br/>missing: pluggable tracing (MLflow, Langfuse),<br/> metrics, alerts"]
     end
 
@@ -41,11 +41,11 @@ flowchart TB
     A <-->|"store / retrieve"| M
     M -->|"relevant context"| C
     A <-->|"delegate / aggregate"| O
-    A -->|"high-impact actions"| HITL
-    HITL -->|"approve / correct"| A
+    A -->|"change table rows"| HITL
+    HITL -->|"approve / edit / verify"| A
     A -.->|"telemetry"| OBS
     OBS -.->|"find issues, improve"| A
-    EV -.->|"test before shipping"| A
+    EV -.->|"score against golden sets"| A
     A -->|"final response"| U
 
     %% Palette from frontend/src/index.css
@@ -57,8 +57,8 @@ flowchart TB
     classDef actor fill:#ffffff,stroke:#e5e2dc,color:#1b2232
 
     class C,A,T,M,O,L1 done
-    class G,OBS,L2 partial
-    class HITL,EV,L3 planned
+    class G,OBS,HITL,EV,L2 partial
+    class L3 planned
     class U actor
 
     style H fill:#faf8f5,stroke:#e5e2dc,color:#1b2232
