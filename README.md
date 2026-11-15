@@ -8,12 +8,25 @@
 [![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#status)
 
-Chat with your documents. Track what changed between versions, and why it matters.
+> **An open research project** examining state-of-the-art agentic architectures for
+> document analysis, targeted at complex technical documentation in fields that live by
+> standards and regulation: energy, finance, life sciences, aerospace,
+> automotive, telecommunication, and more.
 
-`docsmind` ingests PDFs, DOCX, and text into a version-aware Postgres/pgvector
-store, and gives you an agent, **the Mind**, to analyze them. 
-Built-in subagents perform specialized tasks.
+<p align="center">
+  <img src="docs/Cover.png" alt="The docsmind web interface" width="800" />
+  <br />
+  <em>The docsmind web interface: bundled with the PyPI package and started with <code>docsmind serve</code>.</em>
+</p>
 
+`docsmind` gives you an AI document analyst, **the Mind**, which
+searches and reads your documents, answers with verified page-level citations, and delegates
+specialized work to subagents.
+
+One subagent is the **Change Analyzer**: it compares two versions of a standard or policy and
+proves every compliance-relevant change with verbatim quotes and links to the exact pages of
+both documents, then reports the result with full methodology and cost tracking.
+See [Change analysis](#change-analysis).
 
 ## What works today
 
@@ -172,8 +185,27 @@ Question -> Orchestrator --simple--> Executor <-> Tools / Subagents -> Answer
 
 ### Change analysis
 
-The Change Analyzer compares the **current** version (A) with the **previous** one (B). The Mind
-starts it with `delegate`; the steps run in code, with models used inside them:
+The Change Analyzer is an autonomous system that compares two versions of a standard or policy
+and verifies every compliance-relevant finding in depth. It loops over each finding until it is
+proven with verbatim quotes and links to the exact pages of both documents, and drops anything
+it cannot prove. What sets it apart:
+
+- **Audit-grade evidence**: proof passages are re-checked by code against the stored text,
+  and "new" or "removed" claims are confirmed absent from the other version.
+- **Decision-ready report**: substantive changes by clause, compliance impact stated as
+  obligations, other noticeable findings, and editorial, relocated and non-normative
+  changes listed separately. Excel export included.
+- **Changelog cross-check**: the publisher's own change notes, found in the documents and,
+  for public ones, online, are matched against the verified findings; unexplained entries
+  are checked against both versions.
+- **Transparent methodology and cost tracking**: every report states how the texts were
+  compared, how many candidates were scanned and verified, the model calls, tokens and time
+  spent, and the cost in USD per model at list prices.
+- **Honest by design**: each report carries a notice that it is AI-generated and must be
+  reviewed by a qualified person before anyone relies on it.
+
+It compares the **current** version (A) with the **previous** one (B). The Mind starts it with
+`delegate`; the steps run in code, with models used inside them:
 
 1. **Prepare** (code): headers, footers and page numbers are removed, the texts are split into
    sentences and diffed. Identical texts stop here. Below `CHANGE_DIFF_THRESHOLD` of changed
@@ -236,6 +268,8 @@ HTTP: `POST /api/chat` streams Server-Sent Events (`route`, `plan`, `tool_start`
 `GET /api/conversations[/{id}]`, `DELETE /api/conversations/{id}`, `GET /api/agent`.
 
 ## How ingestion works
+
+`docsmind` ingests PDFs, common Office documents (DOCX, XLSX, PPTX, including legacy variants), and text into a version-aware Postgres/pgvector store, and gives you an agent, **the Mind**, to analyze them. Other formats (images, audio, video, and code files) are planned for a later implementation.
 
 Ingestion is deliberately simple and predictable. There's no layout guessing, because
 heuristics that work on one PDF break on the next.
