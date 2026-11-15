@@ -103,7 +103,15 @@ export interface StoredMessage {
   role: "user" | "assistant"
   content: string
   citations: ChatCitation[]
-  meta: { route?: "simple" | "complex"; plan?: string[]; steps?: number; analyses?: string[] }
+  meta: {
+    route?: "simple" | "complex" | "delegate"
+    plan?: string[]
+    steps?: number
+    analyses?: string[]
+    /** What was done during the turn (tool calls, subagent work), replayed to show the trace again. */
+    trace?: unknown[]
+    duration_ms?: number
+  }
   created_at: string
 }
 

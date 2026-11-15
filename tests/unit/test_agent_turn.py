@@ -298,7 +298,7 @@ def test_describe_gives_the_ui_plain_tool_summaries_and_stages(config, llm, repo
     }  # fmt: skip
     mind_tiers = {t["name"]: t["tier"] for t in info["agent"]["tools"]}
     assert mind_tiers["delegate"] == "mind" and "get_table" not in mind_tiers and "scan_documents" not in mind_tiers
-    assert info["limits"]["change_agent_max_steps"] == 25 and info["limits"]["change_request_max_model_calls"] == 300
+    assert info["limits"]["change_agent_max_steps"] == 25 and info["limits"]["change_request_max_model_calls"] == 1000
 
 
 async def test_a_delegate_route_skips_the_planner(config, llm, repo):
@@ -351,3 +351,21 @@ async def test_delegate_needs_the_users_request_and_a_pair_or_an_analysis(config
     assert no_pair.is_error and "documents=[current, previous]" in no_pair.content
     assert not (await call({"subagent": "change_analyzer", "task": "Compare", "documents": ["D2", "D1"]})).is_error
     assert not (await call({"subagent": "change_analyzer", "task": "Verify row R3", "analysis_id": "3f2a"})).is_error
+
+
+async def test_the_activity_trace_is_saved_with_the_answer_so_it_can_be_shown_again(config, llm, repo):
+    llm.queue("router", text('{"route": "simple"}'))
+    llm.queue("executor", tool_use(("grep", {"text": "ten years " * 80})), text("Ten years [S1]."))
+    llm.queue("memory", text("{}"))
+    agent = make_agent(config, llm, repo)
+    events = await collect(agent, "How long are invoices kept?")
+    await agent.drain()
+    conversation_id = next(e for e in events if e.type == "answer").data["conversation_id"]
+
+    reply = (await agent.conversations.messages(UUID(conversation_id)))[-1]
+    kinds = [e["type"] for e in reply.meta["trace"]]
+    assert kinds[0] == "route" and "tool_start" in kinds and "tool_end" in kinds
+    assert "token" not in kinds  # the streamed text is the answer itself, not part of the trace
+    start = next(e for e in reply.meta["trace"] if e["type"] == "tool_start")
+    assert start["data"]["name"] == "grep" and len(start["data"]["args"]["text"]) <= 300  # long arguments are shortened
+    assert reply.meta["duration_ms"] >= 0

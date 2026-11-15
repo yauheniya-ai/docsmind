@@ -149,6 +149,21 @@ def row_line(row: ChangeRow) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
+_SOURCE_MARK = re.compile(r"\s*\[S\d+(?:\s*,\s*S?\d+)*\]")
+
+
+def plain_text(text: str, a_handle: str = "", b_handle: str = "") -> str:
+    """Text a model wrote, made fit to show a person: no [S#] source markers (they belong to a chat turn),
+    and the register handles of the two documents (D1, D2) written as A and B, "pp." as "p." so that "A p.12"
+    becomes a link to that page."""
+    text = _SOURCE_MARK.sub("", text)
+    for handle, side in ((a_handle, "A"), (b_handle, "B")):
+        if handle:
+            text = re.sub(rf"\b{re.escape(handle)}\b", side, text)
+    text = re.sub(r"\b([AB]) pp\.\s*(\d+)", r"\1 p.\2", text)
+    return " ".join(text.split())
+
+
 def row_to_json(row: ChangeRow) -> dict[str, Any]:
     """A row as the UI gets it (every field, JSON-native)."""
     return row.model_dump(mode="json")
@@ -157,6 +172,7 @@ def row_to_json(row: ChangeRow) -> dict[str, Any]:
 __all__ = [
     "extract_json",
     "parse_row_line",
+    "plain_text",
     "row_for_model",
     "row_from_object",
     "row_key",

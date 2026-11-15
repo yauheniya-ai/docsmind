@@ -30,6 +30,7 @@ class LoopOutcome:
     text: str
     exhausted: bool
     vision_log: list[str] = field(default_factory=list)  # what page_vision returned in this loop
+    tools_called: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -147,4 +148,4 @@ class RunEnv:
             self.vision_reads += len(ctx.vision_log)
         self.tool_steps += result.steps
         self.model_calls += result.steps
-        return LoopOutcome(result.text, result.exhausted, list(ctx.vision_log))
+        return LoopOutcome(result.text, result.exhausted, list(ctx.vision_log), list(result.tools_called))

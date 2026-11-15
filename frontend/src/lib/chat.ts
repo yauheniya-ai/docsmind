@@ -164,14 +164,20 @@ export function newTurn(question: string): Turn {
   }
 }
 
-/** A finished turn rebuilt from a stored conversation (no activity trace is persisted). */
+/** A finished turn rebuilt from a stored conversation. Its activity trace is replayed from the saved events. */
 export function storedTurn(
   question: string,
   answer: string,
   citations: ChatCitation[],
-  meta: { route?: "simple" | "complex" | "delegate"; plan?: string[]; analyses?: string[] },
+  meta: {
+    route?: "simple" | "complex" | "delegate"
+    plan?: string[]
+    analyses?: string[]
+    trace?: unknown[]
+    duration_ms?: number
+  },
 ): Turn {
-  return {
+  let turn: Turn = {
     ...newTurn(question),
     status: "done",
     route: meta.route,
@@ -179,6 +185,20 @@ export function storedTurn(
     analyses: (meta.analyses ?? []).map((id) => ({ id, status: "done", rows: [], removed: 0 })),
     answer,
     citations,
+    durationMs: meta.duration_ms,
+  }
+  for (const event of (meta.trace ?? []) as ChatEvent[]) turn = reduceTurn(turn, event)
+  // Anything still marked running when the turn was saved is over now.
+  const finish = <T extends { status: TraceStatus }>(item: T): T => (item.status === "running" ? { ...item, status: "ok" } : item)
+  return {
+    ...turn,
+    status: "done",
+    streamText: "",
+    answer,
+    citations,
+    trace: turn.trace.map((item) =>
+      item.kind === "subagent" ? { ...finish(item), items: item.items.map(finish) } : item.kind === "tool" ? finish(item) : item,
+    ),
   }
 }
 

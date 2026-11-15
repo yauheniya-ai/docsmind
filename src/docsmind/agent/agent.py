@@ -53,6 +53,22 @@ from docsmind.domain.ports import LLM, ChangeStore, ConversationStore, MemorySto
 log = logging.getLogger(__name__)
 
 MAX_QUESTION_CHARS = 8_000
+# What of a turn's activity is saved with the answer, so the trace can be shown again when the conversation is
+# opened later (never the tokens, nor the rows of a change table: those are stored elsewhere).
+TRACE_EVENTS = frozenset({"route", "plan", "tool_start", "tool_end", "subagent_start", "subagent_end", "note"})
+MAX_TRACE_EVENTS = 600
+MAX_TRACE_TEXT = 300
+
+
+def _compact(value):
+    """Long strings shortened, so a saved trace stays small."""
+    if isinstance(value, str):
+        return value if len(value) <= MAX_TRACE_TEXT else value[: MAX_TRACE_TEXT - 1] + "…"
+    if isinstance(value, dict):
+        return {k: _compact(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_compact(v) for v in value[:40]]
+    return value
 FALLBACK_ANSWER = (
     "I ran out of steps before I could finish. Try narrowing the question or selecting a single document."
 )
@@ -463,7 +479,9 @@ class DocsmindAgent:
             env = self._make_env(lambda _event: None, SUBAGENTS["change_analyzer"].tools)
             analyzer = ChangeAnalyzer(env, Catalog([]))
             analyzer.analysis = analysis
-            await analyzer.op_write_report(reuse_effort=True)
+            analyzer.request = "Report updated after the table was edited."
+            await analyzer.op_write_report()
+            await analyzer._record_run(0, "done")  # the rewrite costs a model call: it belongs to the history
             return await self.changes.get_analysis(analysis_id) or analysis
 
     async def _analysis_lines(self, catalog: Catalog) -> list[str]:
@@ -542,11 +560,14 @@ class DocsmindAgent:
         # Change analyses started during this turn are remembered on the assistant message, so the
         # UI can reopen their tables when the conversation is loaded again.
         analyses: list[str] = []
+        trace_events: list[dict] = []
         send = emit
 
         def emit(event: AgentEvent) -> None:
             if event.type == "analysis_start" and event.data.get("id") not in analyses:
                 analyses.append(event.data["id"])
+            if event.type in TRACE_EVENTS and len(trace_events) < MAX_TRACE_EVENTS:
+                trace_events.append({"type": event.type, "data": _compact(event.data)})
             send(event)
 
 
@@ -635,6 +656,8 @@ class DocsmindAgent:
             "plan": state.plan.steps if state.plan else [],
             "steps": result.steps,
             "usage": usage.model_dump(),
+            "trace": trace_events,  # replayed by the UI to show what was done, also after a reload
+            "duration_ms": int((time.monotonic() - started) * 1000),
         }
         if analyses:
             route_meta["analyses"] = analyses

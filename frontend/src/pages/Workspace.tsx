@@ -10,6 +10,7 @@ import { ChangePanel } from "@/components/chat/ChangePanel"
 import { Markdown } from "@/components/chat/Markdown"
 import { SourceCards } from "@/components/chat/SourceCards"
 import { SourcePanel } from "@/components/chat/SourcePanel"
+import { UserQuestion } from "@/components/chat/UserQuestion"
 import { api, type ChatCitation, type ConversationDetail, type DocumentSummary } from "@/lib/api"
 import { newTurn, reduceTurn, storedTurn, streamChat, type ChatEvent, type Turn } from "@/lib/chat"
 import { useTypewriter } from "@/lib/useTypewriter"
@@ -259,9 +260,7 @@ export function Workspace() {
           <div className="mx-auto w-full max-w-4xl animate-fade-in space-y-12 p-4 pb-32 md:p-8">
             {turns.map((turn) => (
               <section key={turn.id} className="animate-slide-in-bottom space-y-5">
-                <h2 className="border-b border-border/50 pb-4 font-serif text-2xl font-medium tracking-tight text-foreground md:text-3xl">
-                  {turn.question}
-                </h2>
+                <UserQuestion text={turn.question} />
 
                 <AgentTrace turn={turn} />
 

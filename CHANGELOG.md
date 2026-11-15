@@ -25,12 +25,38 @@ All notable changes to this project will be documented in this file.
 - The Mind has a "delegate" route that skips the planner. The register lists the stored change analyses.
 - Cost tracking knows uncached, cached-read and cache-write input and output tokens: per model, per tool and
   per run, with the cache hit rate and what the run would have cost without caching (`DOCSMIND_MODEL_PRICES`).
-- Limits per request: `DOCSMIND_CHANGE_AGENT_MAX_STEPS=25` and `DOCSMIND_CHANGE_REQUEST_MAX_MODEL_CALLS=300`.
+- Limits per request: `DOCSMIND_CHANGE_AGENT_MAX_STEPS=25` and `DOCSMIND_CHANGE_REQUEST_MAX_MODEL_CALLS=1000`.
 - The Text tab can show the normalized text (one sentence per line, headers, footers and page
   numbers removed) that the change analysis diffs. It is saved at ingest in
   `document_versions.normalized_text` (migration 0006; run `docsmind db upgrade`) and served by
   `GET /api/documents/{version_id}/normalized-text`, which backfills older versions.
 - The sidebar can be collapsed to give the main content more room.
+
+### Fixed
+
+- A row is never added twice. Every new row (from the changelog check or from the agent) first passes one gate that
+  compares it with every row of the table, active, pending and archived: code catches the obvious repeats (the same
+  clause, or the same clause number written 03.01.08 in one version and 3.1.8 in the other) and a small model reads the
+  full list of clauses for the rest. A refused row is not added; if it carries proof the existing row lacks, the proof goes
+  to the existing row. Changelog entries that name a clause number are matched to rows by code.
+- The report is short and no longer repeats the table: Compliance impact (a high-level summary for executives and
+  operators, without references, no longer cut off), then the count of substantive changes (new, modified, removed)
+  with the editorial and relocated clauses listed by identifier, Methodology and the disclaimer. The changelog moved
+  into the methodology and says whether it was looked for in the documents only or also online. What is not verified is stated
+  in the methodology only, never in the compliance impact. A long request at the top of a turn is shown as a compact "Your
+  request" card with "Show more" instead of a huge heading.
+- A long analysis no longer ends without a report: the report is written even when a request reaches the model-call
+  limit (raised to 1000), and its methodology, effort and cost cover every request on the analysis, not only the last.
+- The changelog search also checks the publisher's own page for public documents (the URL or DOI printed in the
+  documents, or a URL you name), even when the document has a revision history of its own. Its text shows the
+  documents as A and B with clickable page references, never as D1/D2 or [S#] markers.
+- The activity trace of a turn is saved with the answer and shown again, collapsed, when the conversation is reopened.
+  The misleading "N documents in scope" line is gone.
+
+- A changelog that is a spreadsheet or CSV is imported by code: the agent only names the columns (clause, kind of
+  change, description) and every row becomes an entry, instead of paging through it 40 rows at a time and retyping
+  it. A later search that finds nothing, or less, no longer replaces a changelog that was found. The trace lists the
+  clause identifiers that were verified.
 
 ### Changed
 

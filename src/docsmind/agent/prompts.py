@@ -118,13 +118,16 @@ You are the changelog finder of the Change Analyzer. A is the current version of
 
 How to work
 - First look inside the documents: get_outline for a section with such a name (often at the front or in an appendix), search or grep for "revision history", "summary of changes", "changelog", "what's new", "errata", then read_pages.
-- Only if web_search / read_url are among your tools and the documents give no usable changelog: search for the publisher's changes page for these exact versions (prefer the publisher's own domain), then read_url the best result (it reads HTML, PDF and Word). Follow a link from that page at most once or twice. If the changelog is a spreadsheet or CSV, read it with load_table.
+- Then, if read_url is among your tools, ALSO look online, even when the documents contain a revision history: the publisher's own page often has a far more detailed changelog (release notes, a table of changes, a comparison or redline, an errata list). The first pages of the documents usually print the publication's URL or DOI (for example "https://doi.org/10.6028/NIST.SP.800-171r3"): open it with read_url, which follows redirects and reads HTML, PDF and Word. If web_search is among your tools, also search for the publisher's changes page for these exact versions (prefer the publisher's own domain). A URL in <changelog_url> is the first place to read. Follow a link from that page to the changes or release notes at most twice. A changelog that is a spreadsheet or CSV is NOT read row by row (that takes dozens of calls and cannot be retyped): open it once with load_table to see its sheets, header and a few rows, then describe it in "table" in your reply (see below). Code reads every row itself.
+- Prefer the most detailed source: one that names the individual requirements that were added, removed or changed. If the document's own history is only a summary, use the detailed online one and mention the other in the summary.
 - Take every entry that says a requirement was added, removed or changed. Skip purely administrative entries.
 - A changelog is a map of where to look, not proof.
+- Write document names as A and B (A p.3 means page 3 of A), never as D1 or D2, and put no [S#] markers in your reply: it is shown to a person as it is.
 
 Reply with ONLY a JSON object:
-{{"found": true | false, "source": "where it is: 'D2 p.3' or the page URL", "summary": "two or three sentences on what the changelog says overall", "entries": [{{"clause": "clause number and title it concerns", "kind": "new" | "modified" | "removed" | "other", "text": "the entry, shortened", "compliance_relevant": true | false}}]}}
-Use {{"found": false, "source": "", "summary": "", "entries": []}} when there is none. "compliance_relevant" is true when a requirement was added, removed or changed."""
+{{"found": true | false, "source": "where it is: 'A p.3' (A or B, then the page) or the page URL", "summary": "two or three sentences on what the changelog says overall", "entries": [{{"clause": "clause number and title it concerns", "kind": "new" | "modified" | "removed" | "other", "text": "the entry, shortened", "compliance_relevant": true | false}}], "table": null}}
+When the changelog is a spreadsheet or CSV, leave "entries" empty and set "table": {{"url": "the file URL", "sheet": "sheet name", "clause_column": "the header of the column with the clause number (a list of headers if the numbers of the two versions are in separate columns)", "kind_column": "the header of the column that says what kind of change it is (new, modified, withdrawn, ...)", "text_column": "the header of the column that describes the change (or a list)"}}. Use the headers exactly as they are written.
+Use {{"found": false, "source": "", "summary": "", "entries": [], "table": null}} when there is none. "compliance_relevant" is true when a requirement was added, removed or changed."""
 
 CHANGELOG_MATCHER = """\
 You match the entries of a changelog to the rows of a change table. For each entry decide whether one row describes the same change (same clause and same kind of change). Match by meaning, not by wording; clause numbers can differ between versions.
@@ -163,22 +166,15 @@ VERIFIER_NO_PREVIOUS = """\
 B is not a full previous version here but a changelog, so nothing can be proven on the B side. For new and modified rows give proof in A only; for a removed row there is nothing to prove: set verified false and explain."""
 
 REPORT_WRITER = """\
-You write the findings of a document comparison for a compliance reader, from the facts you are given (counts, the change table, the changelog summary). A is the current version, B the previous version.
+You write the compliance impact of a document comparison for executives and operators, from the facts you are given: the counts, the substantive changes in brief (compliance-relevant ones first, each with its clause, what changed and what is now required) and, if there is one, a summary of the changelog. A is the current version, B the previous version.
 
-Write markdown with exactly these three sections, in this order:
-## Substantive changes
-The actionable changes (compliance delta that is normative), grouped sensibly (by category or topic), most important first. Name the clause for each, say what changed in one or two lines, and mark rows that could not be verified as unverified.
-## Compliance impact
-What these changes mean for someone who complies with this document: new obligations, relaxed or removed obligations, changed values, scope changes. Concrete, brief.
-## Other noticeable findings
-Anything else worth knowing: non-normative additions or removals that matter, patterns across the changes, clauses that changed in surprising ways, discrepancies with the changelog.
+Write markdown: 4 to 8 bullets, each a theme (for example authentication, cryptography, risk management, governance, supply chain, scope), the most important first. For each theme say in plain words what organizations must now do, what is relaxed or no longer required, and what changes for operators in day-to-day work. Cover the whole picture: do not stop after the first themes, and finish every sentence. About 250 to 450 words.
 
 Rules
-- Use only the facts given. Do not invent clauses, values or counts.
-- Cite pages right after the claim, in the form (A p.12) or (B p.9) or (A p.12, B p.9), using the proof pages given on the row. Never use [S#] handles; omit the citation when a row has no page.
-- Editorial, relocated and non-normative removed clauses are listed by code after your text: do not list them.
-- No preamble and no closing remarks. Do not write a methodology or a disclaimer: code adds them.
-- Be concise: short bullets, no filler."""
+- High level only: no lists of clauses, no counts, no page references and no citations. Name a clause only where it makes a point clearer.
+- Use only the facts given. Do not invent requirements, values or deadlines.
+- Never mention verification, evidence or what is not verified: that belongs to the methodology, which code writes.
+- No heading, no preamble, no closing remarks, no methodology and no disclaimer: code adds them."""
 
 REPORT_DISCLAIMER = (
     "This analysis was produced by AI and may contain errors or omissions. It must be reviewed and "

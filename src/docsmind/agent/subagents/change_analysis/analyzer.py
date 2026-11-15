@@ -29,13 +29,14 @@ from docsmind.agent import prompts
 from docsmind.agent.catalog import Catalog, CatalogDoc
 from docsmind.agent.harness.context import PromptBundle
 from docsmind.agent.loop import run_tool_loop
+from docsmind.agent.subagents.change_analysis.admit import Duplicate, find_duplicate
 from docsmind.agent.subagents.change_analysis.changelog import find_changelog, match_entries
 from docsmind.agent.subagents.change_analysis.env import RunEnv
 from docsmind.agent.subagents.change_analysis.matching import (
-    neighbours,
+    numbers_in,
     parse_handle,
+    row_clause_ids,
     row_handle,
-    similarity,
 )
 from docsmind.agent.subagents.change_analysis.prep import (
     Prepared,
@@ -44,8 +45,13 @@ from docsmind.agent.subagents.change_analysis.prep import (
     prepare,
     prepare_changelog,
 )
-from docsmind.agent.subagents.change_analysis.report import build_report, clause_name, counts
-from docsmind.agent.subagents.change_analysis.rows import row_to_json
+from docsmind.agent.subagents.change_analysis.report import (
+    build_report,
+    clause_id,
+    clause_name,
+    counts,
+)
+from docsmind.agent.subagents.change_analysis.rows import plain_text, row_to_json
 from docsmind.agent.subagents.change_analysis.scan import ScanFailed, scan
 from docsmind.agent.subagents.change_analysis.verify import DocText, Verdict, squash, verify_row
 from docsmind.agent.subagents.specs import CHANGE_ANALYZER
@@ -69,7 +75,6 @@ OUTLINE_ENTRIES = 40
 FIRST_PAGE_CHARS = 1_500
 LIST_ROWS = 60  # rows get_table shows at once
 VERDICTS = ("versions", "unrelated", "changelog")
-DUPLICATE_SCORE = 0.6  # similarity above which add_row warns about an existing row
 
 
 def _doc_snapshot(doc: CatalogDoc) -> dict:
@@ -122,7 +127,9 @@ class ChangeAnalyzer:
         self._b_text: DocText | None = None
         self.verify_stats = {"attempted": 0, "verified": 0, "removed": 0, "errors": 0}
         self.sub_id = ""
+        self.run_id = uuid4()  # this request, as recorded in the analysis' run history
         self.request = ""
+        self._verified_ids: list[str] = []
         self._rescanned = False  # a scoped or repeated scan was used as a research aid in this request
         self._existing: ChangeAnalysis | None = None  # the analysis as it was when this request started
         self._started = time.monotonic()
@@ -246,8 +253,8 @@ class ChangeAnalyzer:
 
     async def _ensure_report_current(self) -> None:
         """The report always reflects the table: if rows changed (or there is no report yet), it is rewritten
-        here, whatever the agent did. Skipped only when the request ran out of model calls."""
-        if self.analysis is None or self.env.budget_exhausted:
+        here, whatever the agent did, even when the request ran out of model calls (it is one call)."""
+        if self.analysis is None:
             return
         try:
             analysis = await self.env.changes.get_analysis(self.analysis.id)
@@ -362,6 +369,7 @@ class ChangeAnalyzer:
         try:
             await env.changes.add_run(
                 ChangeRun(
+                    id=self.run_id,
                     analysis_id=self.analysis.id,
                     request=self.request[:2_000],
                     kind=self._run_kind(),  # type: ignore[arg-type]
@@ -373,6 +381,9 @@ class ChangeAnalyzer:
                         },
                         "model_calls": env.model_calls,
                         "seconds": int(time.monotonic() - self._started),
+                        "vision_reads": env.vision_reads,
+                        "verify_errors": self.verify_stats["errors"],
+                        "verify_retries": env.verify_retries,
                     },
                     steps=steps,
                     outcome=outcome,
@@ -759,7 +770,7 @@ class ChangeAnalyzer:
 
     # -- tool: find_changelog -----------------------------------------------------------------------
 
-    async def op_find_changelog(self, query: str | None = None) -> str:
+    async def op_find_changelog(self, query: str | None = None, url: str | None = None) -> str:
         analysis = self._need_analysis()
         a, b = self._need_docs()
         if self.changelog_mode or analysis.mode == "changelog":
@@ -772,18 +783,28 @@ class ChangeAnalyzer:
             b,
             public=bool(analysis.public),
             query=query or str(analysis.meta.get("query") or ""),
+            url=url or "",
             notes="",
             emit=self.env.emit,
             tag={"subagent": self.sub_id},
         )
-        rows = await self.env.changes.list_rows(analysis.id)
+        # pending candidates count too: a changelog entry about a finding that still waits for verification is explained
+        rows = [r for r in await self.env.changes.list_rows(analysis.id, status=None) if r.status != "archived"]
         result["unmatched"] = []
         if result.get("found"):
             relevant = [e for e in result["entries"] if e.get("compliance_relevant")]
             if relevant:
-                matches = await match_entries(self.env, relevant, rows)
+                matches = await self._match_entries(relevant, rows)
                 result["matched"] = sum(1 for v in matches.values() if v is not None)
                 result["unmatched"] = [_label(relevant[i]) for i, rid in matches.items() if rid is None]
+        previous = analysis.changelog or {}
+        if previous.get("found") and (not result.get("found") or len(result["entries"]) < len(previous.get("entries") or [])):
+            # A later search that finds nothing, or less, never replaces a changelog that was found.
+            what = "nothing" if not result.get("found") else f"only {len(result['entries'])} entries"
+            return (
+                f"This search found {what}; the changelog found earlier is kept: {previous.get('source') or 'source unknown'}, "
+                f"{len(previous.get('entries') or [])} entries."
+            )
         self.analysis = analysis.model_copy(update={"changelog": result})
         await self.env.changes.update_analysis(analysis.id, changelog=result)
         if not result.get("found"):
@@ -791,7 +812,8 @@ class ChangeAnalyzer:
             return f"No changelog found {where}." + (f" ({result['error']})" if result.get("error") else "")
         entries = result["entries"]
         lines = [
-            f"Changelog found: {result.get('source') or 'source unknown'}. {result.get('summary') or ''}".strip(),
+            f"Changelog found: {result.get('source') or 'source unknown'}. {result.get('summary') or ''}".strip()
+            + (f" All {result['imported']} rows of the spreadsheet were imported as entries." if result.get("imported") else ""),
             f"{len(entries)} entries, {sum(1 for e in entries if e.get('compliance_relevant'))} compliance-relevant.",
         ]
         if result["unmatched"]:
@@ -802,12 +824,35 @@ class ChangeAnalyzer:
             lines.append("Every compliance-relevant entry is covered by a row.")
         return "\n".join(lines)
 
+    async def _match_entries(self, entries: list[dict], rows: list[ChangeRow]) -> dict:
+        """Entry index -> the row that explains it, or None. An entry that names a clause number a row has (03.01.08 in
+        one version is 3.1.8 in the other) is matched by code; the rest are matched by a small model."""
+        by_id: dict[str, ChangeRow] = {}
+        for row in rows:
+            for ident in row_clause_ids(row):
+                by_id.setdefault(ident, row)
+        matches: dict = {}
+        for i, entry in enumerate(entries):
+            hit = next((by_id[n] for n in numbers_in(entry.get("clause", "")) if n in by_id), None)
+            matches[i] = hit.id if hit is not None else None
+        rest = [i for i, rid in matches.items() if rid is None]
+        if rest:
+            try:
+                modelled = await match_entries(self.env, [entries[i] for i in rest], rows)
+            except Exception as exc:  # noqa: BLE001 - an entry that could not be placed is checked against the text later
+                log.warning("Matching changelog entries failed: %s: %s", type(exc).__name__, exc)
+                modelled = {}
+            for position, i in enumerate(rest):
+                matches[i] = modelled.get(position)
+        return matches
+
     # -- tool: verify_findings -------------------------------------------------------------------------
 
     async def op_verify(self, rows: list[str] | None, which: str | None, changelog_gaps: bool) -> str:
         analysis = self._need_analysis()
         a_text, b_text, _prep = await self._ensure_texts()
         self._guard()
+        self._verified_ids = []  # clause identifiers of what this call verified, for the trace
         all_rows = await self.env.changes.list_rows(analysis.id, status=None)
         targets: list[ChangeRow] = []
         problems: list[str] = []
@@ -845,13 +890,16 @@ class ChangeAnalyzer:
                 targets = kept
             outcomes = await self._verify_all(targets, a_text, b_text, "")
             lines += [f"{row_handle(row)} {_short(clause_name(row), 60)}: {text}" for row, text in outcomes]
+            self._verified_ids += [clause_id(row) for row, text in outcomes if text.startswith("verified")]
         if changelog_gaps:
             lines += await self._changelog_gaps(a_text, b_text)
         lines += [f"Skipped {p}" for p in problems]
         if not lines:
             return "Nothing to verify."
-        verified = sum(1 for line in lines if ": verified" in line)
-        return f"Verification done ({verified} verified).\n" + "\n".join(lines)
+        verified = sum(1 for line in lines if ": verified" in line or "(verified)" in line)
+        ids = self._verified_ids
+        shown = ", ".join(ids[:12]) + (f" and {len(ids) - 12} more" if len(ids) > 12 else "")
+        return f"Verification done ({verified} verified{': ' + shown if ids else ''}).\n" + "\n".join(lines)
 
     async def _verify_all(
         self, targets: list[ChangeRow], a: DocText, b: DocText, notes: str
@@ -898,20 +946,24 @@ class ChangeAnalyzer:
         elif verdict.status == "not_found" and row.status == "candidate":
             self.verify_stats["removed"] += 1
             log.info("Archived %s (%s): %s", clause_name(row), row.nature.value, verdict.note)
-            await changes.archive_row(row.id, f"No proof in the text: {verdict.note}")
+            await changes.archive_row(row.id, f"No proof in the text: {self._plain(verdict.note)}")
             self._emit("change_row_removed", id=str(row.id), analysis_id=str(row.analysis_id))
             return f"no proof in the text, archived ({_short(verdict.note, 100)})"
         else:
             if verdict.status == "error":
                 self.verify_stats["errors"] += 1
-                note = verdict.note
+                note = self._plain(verdict.note)
             else:
-                note = f"Not verified: {verdict.note}"
+                note = f"Not verified: {self._plain(verdict.note)}"
             updated = await changes.update_row(row.id, verified=False, proof=[], verification_note=note)
             outcome = f"not verified ({_short(note, 100)})"
         if updated is not None:
             self._emit("change_row_update", row=row_to_json(updated))
         return outcome
+
+    def _plain(self, text: str) -> str:
+        """A model's words for a person: D1/D2 written as A/B, no source markers."""
+        return plain_text(text, self.a_doc.handle if self.a_doc else "", self.b_doc.handle if self.b_doc else "")
 
     async def _note(self, row: ChangeRow, note: str) -> None:
         updated = await self.env.changes.update_row(row.id, verification_note=note)
@@ -954,9 +1006,18 @@ class ChangeAnalyzer:
                 )
             if verdict.status == "verified" and verdict.row is not None:
                 row = verdict.row.model_copy(update={"verified": True, "proof": verdict.proof}).checked()
-                stored = await self._add_row(row, status="active", origin="changelog", verified=True)
-                changelog["added"].append(clause_name(stored))
-                lines.append(f"changelog entry '{_short(label, 70)}' is real: added as {row_handle(stored)} (verified)")
+                stored, duplicate = await self._admit(row, origin="changelog", tool="verify_findings", verified=True)
+                if duplicate is not None:  # the table has it already, however the scan worded or numbered it
+                    changelog["matched"] = int(changelog.get("matched", 0)) + 1
+                    changelog.setdefault("already_in_table", []).append(f"{label} ({row_handle(duplicate.row)})")
+                    lines.append(
+                        f"changelog entry '{_short(label, 70)}' is covered by {row_handle(duplicate.row)} already: not added"
+                    )
+                else:
+                    assert stored is not None
+                    self._verified_ids.append(clause_id(stored))
+                    changelog["added"].append(clause_name(stored))
+                    lines.append(f"changelog entry '{_short(label, 70)}' is real: added as {row_handle(stored)} (verified)")
             elif verdict.status == "not_found":
                 changelog["claimed_not_found"].append(label)
                 lines.append(f"changelog entry '{_short(label, 70)}': claimed, no change found in the text")
@@ -971,19 +1032,19 @@ class ChangeAnalyzer:
 
     # -- tool: write_report ----------------------------------------------------------------------------
 
-    async def op_write_report(self, focus: str = "", *, reuse_effort: bool = False) -> str:
-        """Write the report from the active rows. `reuse_effort`: a rewrite after an edit (no analysis work was
-        done) keeps the effort and cost figures of the analysis instead of counting only the rewrite."""
+    async def op_write_report(self, focus: str = "") -> str:
+        """Write the report from the active rows. Its effort and cost figures cover the whole analysis: every
+        earlier request of its history plus this one."""
         analysis = self._need_analysis()
-        self._guard()
-        self._status("report", "Writing the report")
+        self._status("report", "Writing the report")  # never refused by the call limit: a report is always written
         env, cfg = self.env, self.env.config
         analysis = await env.changes.get_analysis(analysis.id) or analysis
         rows = await env.changes.list_rows(analysis.id)
         if not rows:
             return "The table has no rows: there is nothing to report on."
         scan_meta = dict(analysis.meta.get("scan") or {})
-        previous = analysis.meta if reuse_effort and "cost" in analysis.meta else {}
+        all_rows = await env.changes.list_rows(analysis.id, status=None)
+        effort = await self._effort(analysis)
         stats = {
             "diff_ratio": analysis.diff_ratio or 0.0,
             "threshold": cfg.change_diff_threshold,
@@ -991,22 +1052,12 @@ class ChangeAnalyzer:
                 "parts": scan_meta.get("parts", 0),
                 "skipped": scan_meta.get("skipped", 0),
                 "retries": scan_meta.get("retries", 0),
+                "rows": sum(r.origin == "scan" for r in all_rows),
             },
-            "verify_attempted": previous.get("verify_attempted", self.verify_stats["attempted"]),
-            "verify_removed": previous.get("verify_removed", self.verify_stats["removed"]),
-            "verify_errors": previous.get("verify_errors", self.verify_stats["errors"]),
-            "verify_retries": previous.get("verify_retries", env.verify_retries),
-            "model_calls": previous.get("model_calls", env.model_calls),
-            "tool_steps": previous.get("tool_steps", env.tool_steps),
-            "input_tokens": previous.get("input_tokens", env.usage.input_tokens),
-            "output_tokens": previous.get("output_tokens", env.usage.output_tokens),
-            "cost": previous.get("cost")
-            or {
-                **cost_breakdown(env.usage_by_model, cfg.model_prices),
-                "tools": cost_by_tool(env.usage_by_tool_model, cfg.model_prices),
-            },
-            "vision_reads": previous.get("vision_reads", env.vision_reads),
-            "seconds": previous.get("seconds", int(time.monotonic() - self._started)),
+            # compliance-relevant rows that were put to the test, whichever request did it
+            "verify_attempted": sum(r.actionable and (r.verified or bool(r.verification_note)) for r in all_rows),
+            "verify_removed": sum((r.archive_reason or "").startswith("No proof") for r in all_rows),
+            **effort,
         }
         report = await build_report(
             env,
@@ -1029,6 +1080,52 @@ class ChangeAnalyzer:
         c = counts(rows)
         self._emit("analysis_done", id=str(analysis.id), status="done", counts=c)
         return f"Report written for {c['total']} rows ({c['actionable']} compliance-relevant, {c['verified']} verified)."
+
+    async def _effort(self, analysis: ChangeAnalysis) -> dict:
+        """What the analysis cost so far: the run history (every earlier request) plus this request."""
+        env, cfg = self.env, self.env.config
+        runs = [r for r in await env.changes.list_runs(analysis.id) if r.id != self.run_id]
+        by_model: dict[str, Usage] = {m: u.model_copy() for m, u in env.usage_by_model.items()}
+        tools: dict[str, dict] = {t["tool"]: dict(t) for t in cost_by_tool(env.usage_by_tool_model, cfg.model_prices)}
+        calls, seconds = env.model_calls, int(time.monotonic() - self._started)
+        vision, errors, retries = env.vision_reads, self.verify_stats["errors"], env.verify_retries
+        for run in runs:
+            used = run.usage or {}
+            calls += int(used.get("model_calls", 0))
+            seconds += int(used.get("seconds", 0))
+            vision += int(used.get("vision_reads", 0))
+            errors += int(used.get("verify_errors", 0))
+            retries += int(used.get("verify_retries", 0))
+            cost = used.get("cost") or {}
+            for m in cost.get("models") or []:
+                by_model.setdefault(m["model"], Usage()).add(
+                    Usage(
+                        input_tokens=m.get("input_tokens", 0),
+                        cached_input_tokens=m.get("cached_read_tokens", 0),
+                        cache_write_tokens=m.get("cache_write_tokens", 0),
+                        output_tokens=m.get("output_tokens", 0),
+                    )
+                )
+            for t in cost.get("tools") or []:
+                entry = tools.setdefault(t["tool"], {"tool": t["tool"], "usd": 0.0, "input_tokens": 0, "output_tokens": 0, "calls": 0})
+                entry["usd"] += t.get("usd", 0.0)
+                entry["input_tokens"] += t.get("input_tokens", 0)
+                entry["output_tokens"] += t.get("output_tokens", 0)
+        cost_now = {
+            **cost_breakdown(by_model, cfg.model_prices),
+            "tools": sorted(tools.values(), key=lambda t: t["usd"], reverse=True),
+        }
+        return {
+            "requests": len(runs) + 1,
+            "model_calls": calls,
+            "input_tokens": sum(u.input_tokens for u in by_model.values()),
+            "output_tokens": sum(u.output_tokens for u in by_model.values()),
+            "seconds": seconds,
+            "vision_reads": vision,
+            "verify_errors": errors,
+            "verify_retries": retries,
+            "cost": cost_now,
+        }
 
     def _models_by_stage(self) -> dict[str, str]:
         """Which model did which job (for the Info sheet of the Excel export)."""
@@ -1137,27 +1234,47 @@ class ChangeAnalyzer:
             lines.append("Proof:\n" + proof)
         return "\n".join(lines)
 
-    async def op_add_row(self, fields: dict, *, allow_duplicate: bool = False) -> str:
+    async def _admit(
+        self, row: ChangeRow, *, origin: str, tool: str, verified: bool | None = None
+    ) -> tuple[ChangeRow | None, Duplicate | None]:
+        """The only way a new row enters the table: after it was compared with every row that exists (active, pending
+        and archived). One at a time, so two rows added together cannot both slip past each other. -> (the stored row,
+        None) or (None, the row that already covers it)."""
+        analysis = self._need_analysis()
+        async with self._lock:
+            known = await self.env.changes.list_rows(analysis.id, status=None)
+            duplicate = await find_duplicate(self.env, row, known, tool=tool)
+            if duplicate is not None:
+                await self._lend_proof(duplicate.row, row)
+                return None, duplicate
+            return await self._insert_row(row, status="active", origin=origin, verified=verified), None
+
+    async def _lend_proof(self, existing: ChangeRow, new: ChangeRow) -> None:
+        """A refused row that was proven where the existing one is not: the proof belongs to the existing row."""
+        if existing.status == "archived" or existing.verified or not (new.verified and new.proof):
+            return
+        fields: dict = {"verified": True, "proof": new.proof, "verification_note": None}
+        if existing.status == "candidate":
+            fields["status"] = "active"
+        updated = await self.env.changes.update_row(existing.id, **fields)
+        if updated is not None:
+            self._emit("change_row_update", row=row_to_json(updated))
+
+    async def op_add_row(self, fields: dict) -> str:
         analysis = self._need_analysis()
         row = ChangeRow(analysis_id=analysis.id, **fields).checked()
         if not (row.current_clause.strip() or row.previous_clause.strip()):
             raise ToolInputError("A row needs a current or a previous clause.")
-        async with self._lock:  # the duplicate check and the insert are one step: parallel calls must not race
-            if not allow_duplicate:
-                known = await self.env.changes.list_rows(analysis.id, status=None)
-                known = [r for r in known if r.status in ("active", "archived")]
-                similar = [r for r in neighbours(row, known, 3) if similarity(row, r) >= DUPLICATE_SCORE]
-                if similar:
-                    lines = [
-                        f"{row_handle(r)} ({r.status}): {_short(r.current_clause)} | {_short(r.change_description)}"
-                        for r in similar
-                    ]
-                    return (
-                        "Not added: similar rows exist already:\n" + "\n".join(lines) + "\n"
-                        "If this is really a different finding, call add_row again with allow_duplicate=true. "
-                        "To bring back an archived row use restore_row."
-                    )
-            stored = await self._insert_row(row, status="active", origin="agent")
+        stored, duplicate = await self._admit(row, origin="agent", tool="add_row")
+        if duplicate is not None:
+            existing = duplicate.row
+            hint = "To bring it back use restore_row." if existing.status == "archived" else "To change it use update_row."
+            return (
+                f"Not added: {row_handle(existing)} ({existing.status}) already covers this: "
+                f"{_short(existing.current_clause)} | {_short(existing.change_description)}. "
+                f"{duplicate.reason} {hint} Repeating a finding is never right."
+            ).replace("  ", " ")
+        assert stored is not None
         note = "" if stored.actionable else " (it is not actionable: editorial or non-normative rows are not verified in depth)"
         return f"Added {row_handle(stored)} to the table, not verified. Call verify_findings on it{note}."
 

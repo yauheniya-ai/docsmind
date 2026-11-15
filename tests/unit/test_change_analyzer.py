@@ -460,7 +460,8 @@ async def test_pipeline_builds_a_verified_table_and_drops_what_it_could_not_prov
     # The unproven row is gone: not in the table, not in the report, not stored anywhere.
     report = result.analysis.report
     assert "Log retention" not in report and "not_found" not in result.analysis.meta
-    assert "## Substantive changes" in report and "Methodology" in report
+    headings = [line for line in report.splitlines() if line.startswith("## ")]
+    assert headings == ["## Compliance impact", "## Changes", "## Methodology"]  # in this order, and nothing else
     assert str(result.analysis.id) in result.message
 
     assert len(llm.calls_for("verifier")) == 6
@@ -583,7 +584,7 @@ async def test_changelog_entry_without_a_row_is_checked_and_added(agent, llm):
     (row,) = result.rows
     assert row.origin == "changelog" and row.verified and row.current_clause == "Backup encryption"
     assert result.analysis.changelog["added"] == ["Backup encryption"]
-    assert "Added to the table from the changelog" in result.analysis.report
+    assert "Added to the table from the changelog, with proof (1): Backup encryption" in result.analysis.report  # in the methodology
 
 
 async def test_verify_existing_rechecks_a_row_that_could_not_be_checked(agent, llm, changes):

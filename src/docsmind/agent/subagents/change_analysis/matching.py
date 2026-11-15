@@ -1,4 +1,4 @@
-"""Row handles (R1, R2, ...) and the code-side similarity used to spot duplicates when a row is added."""
+"""Row handles (R1, R2, ...) and the clause identifiers that tie a finding of one version to a clause of the other."""
 
 from __future__ import annotations
 
@@ -6,8 +6,7 @@ import re
 
 from docsmind.domain.changes import ChangeRow
 
-_WORDS = re.compile(r"[a-z0-9]{3,}")
-_NUMBER = re.compile(r"^\s*(\d+(?:\.\d+)*)")
+_NUMBER = re.compile(r"\d+(?:\.\d+)+")  # 3.1.8, 03.01.08, A... "3.1" counts, a bare "3" does not
 
 
 def row_handle(row: ChangeRow) -> str:
@@ -21,33 +20,26 @@ def parse_handle(text: str) -> int | None:
     return int(match.group(1)) - 1 if match and int(match.group(1)) >= 1 else None
 
 
-def _tokens(row: ChangeRow) -> set[str]:
-    return set(_WORDS.findall(f"{row.current_clause} {row.previous_clause} {row.change_description}".lower()))
+def normalize_number(number: str) -> str:
+    """"03.01.08" -> "3.1.8": the same clause is numbered with leading zeros in one version and without in the other."""
+    return ".".join(str(int(part)) for part in number.split("."))
 
 
-def _clause_number(row: ChangeRow) -> str:
-    match = _NUMBER.match(row.current_clause or row.previous_clause)
-    return match.group(1) if match else ""
+def numbers_in(text: str) -> set[str]:
+    return {normalize_number(m) for m in _NUMBER.findall(text or "")}
 
 
-def _score(a: ChangeRow, b: ChangeRow) -> float:
-    ta, tb = _tokens(a), _tokens(b)
-    overlap = len(ta & tb) / len(ta | tb) if ta and tb else 0.0
-    number = _clause_number(a)
-    if number and number == _clause_number(b):
-        overlap += 1.0  # the same clause number is the strongest hint
-    title = " ".join(a.current_clause.lower().split())
-    if title and title == " ".join(b.current_clause.lower().split()):
-        overlap += 1.0  # so is the same clause title
-    return overlap
+def clause_id(text: str) -> str:
+    """The most specific number in a clause label, normalized: "3.1 ACCESS CONTROL - 3.1.8 Limit ..." -> "3.1.8",
+    "03.01.08 Unsuccessful Logon Attempts" -> "3.1.8". "" when the label has no number."""
+    found = numbers_in(text)
+    return max(found, key=lambda n: (n.count("."), len(n))) if found else ""
 
 
-def similarity(a: ChangeRow, b: ChangeRow) -> float:
-    """How alike two rows are (token overlap, plus 1 for the same clause number)."""
-    return _score(a, b)
+def row_clause_ids(row: ChangeRow) -> set[str]:
+    """The clause of a row in A and in B, as identifiers: two rows about one clause share one."""
+    return {i for i in (clause_id(row.current_clause), clause_id(row.previous_clause)) if i}
 
 
-def neighbours(candidate: ChangeRow, existing: list[ChangeRow], limit: int) -> list[ChangeRow]:
-    """The `limit` existing rows most likely to describe the same change as `candidate`."""
-    ranked = sorted(existing, key=lambda r: _score(candidate, r), reverse=True)
-    return ranked[:limit]
+def title_key(row: ChangeRow) -> str:
+    return " ".join((row.current_clause or "").lower().split())

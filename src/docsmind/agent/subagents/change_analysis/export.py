@@ -81,7 +81,7 @@ def info_rows(
     for stage, model in (meta.get("models") or {}).items():
         out.append((f"Model: {stage}", model))
     if meta.get("model_calls") is not None:
-        out.append(("Model calls", f"{meta['model_calls']} ({meta.get('tool_steps', 0)} in tool loops)"))
+        out.append(("Model calls", f"{meta['model_calls']}" + (f" in {meta['requests']} requests" if meta.get("requests", 1) > 1 else "")))
     if meta.get("vision_reads"):
         out.append(("Page vision reads", str(meta["vision_reads"])))
     ratio = f" (diff ratio {analysis.diff_ratio:.0%})" if analysis.diff_ratio is not None else ""

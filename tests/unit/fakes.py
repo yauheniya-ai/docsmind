@@ -22,8 +22,9 @@ class ScriptedLLM:
         "You are the scanner": "scanner",
         "You are the changelog finder": "finder",
         "You match the entries": "matcher",
+        "You guard a change table": "gate",
         "You are the verifier": "verifier",
-        "You write the findings": "reporter",
+        "You write the compliance impact": "reporter",
         "You decide what a document assistant should remember": "memory",
         "You maintain the running summary": "summarizer",
     }

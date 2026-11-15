@@ -8,11 +8,15 @@ import {
   FileSpreadsheet,
   FileText,
   Globe,
+  GitCompareArrows,
   Link2,
   ListTree,
   Loader2,
   Route as RouteIcon,
+  ScanSearch,
+  ScrollText,
   Search,
+  ShieldCheck,
   Table2,
   TextSearch,
   X,
@@ -88,6 +92,24 @@ function describeTool(tool: ToolItem, catalog: CatalogEntry[]): { icon: LucideIc
     }
     case "load_table":
       return { icon: Table2, label: `${running ? "Reading" : "Read"} the table at ${hostOf(str(a.url))}` }
+    case "check_versions":
+      return { icon: GitCompareArrows, label: running ? "Checking that these are versions" : "Checked the versions" }
+    case "scan_documents":
+      return { icon: ScanSearch, label: running ? "Scanning for changes" : "Scanned for changes" }
+    case "find_changelog":
+      return { icon: ScrollText, label: running ? "Looking for a changelog" : "Looked for a changelog" }
+    case "verify_findings":
+      return { icon: ShieldCheck, label: running ? "Verifying findings" : "Verified findings" }
+    case "write_report":
+      return { icon: FileText, label: running ? "Writing the report" : "Wrote the report" }
+    case "get_table":
+    case "get_row":
+      return { icon: Table2, label: running ? "Reading the table" : "Read the table" }
+    case "add_row":
+    case "update_row":
+    case "archive_row":
+    case "restore_row":
+      return { icon: Table2, label: running ? "Editing the table" : "Edited the table" }
     case "export_excel":
     case "create_file":
       return { icon: FileSpreadsheet, label: running ? "Writing the file" : "Wrote the file" }
@@ -219,9 +241,12 @@ export function AgentTrace({ turn }: { turn: Turn }) {
           {turn.route && (
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <span className="rounded-md bg-background/70 px-2 py-0.5 font-medium">
-                {turn.route === "complex" ? "Complex question · planned" : "Direct question"}
+                {turn.route === "complex"
+                  ? "Complex question · planned"
+                  : turn.route === "delegate"
+                    ? "Handed to the Change Analyzer"
+                    : "Direct question"}
               </span>
-              <span>{turn.catalog.length} {turn.catalog.length === 1 ? "document" : "documents"} in scope</span>
             </div>
           )}
 

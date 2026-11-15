@@ -99,15 +99,16 @@ class DocsmindConfig(BaseSettings):
     # A verification that fails for a technical reason (the model gave no usable answer, a call
     # broke) is relaunched this many times before the row is left unverified.
     change_verify_max_retries: int = 3
-    change_changelog_max_steps: int = 8  # tool-loop steps for the changelog search
+    change_changelog_max_steps: int = 14  # tool-loop steps for the changelog search
     change_vision_dpi: int = 130  # resolution of page images for `page_vision`
     change_vision_max_output_tokens: int = 1_500  # per `page_vision` answer
     change_table_max_bytes: int = 10_000_000  # largest spreadsheet `load_table` downloads
     # The Change Analyzer is an agent: its own loop is capped in steps (one model turn, parallel tool
     # calls count once), and the whole request in model calls (loops inside tools included). The call
-    # cap is a rough boundary to be tuned empirically: a 30-page questionnaire alone takes 100+ calls.
+    # cap is a rough boundary to be tuned empirically: a 30-page questionnaire alone takes 100+ calls and
+    # a 100-page standard with 100+ compliance rows about 300. The report is written even past the cap.
     change_agent_max_steps: int = 25
-    change_request_max_model_calls: int = 300
+    change_request_max_model_calls: int = 1_000
     # Readers and files (core tools of every agent).
     read_url_min_chars_per_page: int = 100  # fewer characters on a PDF page: it needs `vision_pages`
     create_file_max_bytes: int = 5_000_000

@@ -91,6 +91,11 @@ class ScanDocumentsTool(Tool):
 
 class FindChangelogArgs(BaseModel):
     query: str | None = Field(default=None, max_length=200, description="A web search hint, e.g. 'NIST SP 800-171 Rev. 3 changelog'.")
+    url: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="A page the user pointed to (the publisher's changelog or release notes): it is read first. Public documents only.",
+    )
 
 
 class FindChangelogTool(Tool):
@@ -101,7 +106,9 @@ class FindChangelogTool(Tool):
     summary = "Looks for a revision history or release notes, in the documents and (for public ones) online."
     description = (
         "Look for a changelog of the change from B to A: inside the documents, and for public documents also "
-        "online (HTML, PDF and Word are readable). Stores its entries and reports which compliance-relevant "
+        "online (HTML, PDF and Word are readable): for public documents it also checks the publisher's own page, "
+        "which is often far more detailed than the document's revision history; pass url when the user named a page. "
+        "Stores its entries and reports which compliance-relevant "
         "entries have no row in the table. Internal documents are never searched online."
     )
     how_it_works = (
@@ -112,7 +119,7 @@ class FindChangelogTool(Tool):
     Args = FindChangelogArgs
 
     async def run(self, args: FindChangelogArgs, ctx: ToolContext) -> ToolOutput:
-        text = await analyzer_of(ctx).op_find_changelog(args.query)
+        text = await analyzer_of(ctx).op_find_changelog(args.query, args.url)
         return ToolOutput(text, summary=text.split("\n", 1)[0][:90])
 
 
@@ -161,11 +168,13 @@ class WriteReportTool(Tool):
     tier = "advanced"
     model_prompt = prompts.REPORT_WRITER
     long_running = True
-    summary = "Writes the report from the current table: findings, compliance impact, methodology, cost."
+    summary = "Writes the short report from the current table: compliance impact, counts of changes, methodology, cost."
     description = (
-        "Write (or rewrite) the report from the active rows of the table. A model writes the findings and the "
-        "compliance impact; code adds editorial and relocated rows, the changelog section, the methodology, the "
-        "cost and the disclaimer. Code already rewrites the report when the table changed: call it only to focus the report or when the user asks for one."
+        "Write (or rewrite) the short report from the active rows of the table: a model writes the compliance impact "
+        "(a high-level summary for executives and operators, no references); code adds the count of substantive changes "
+        "(new, modified, removed), the editorial and relocated clauses by identifier, the methodology (with the changelog "
+        "and where it was looked for), the cost and the disclaimer. The report does not repeat the table. Code already "
+        "rewrites the report when the table changed: call it only to focus the report or when the user asks for one."
     )
     how_it_works = (
         "Reads the active rows and the stored changelog.",
@@ -248,7 +257,7 @@ class RowFields(BaseModel):
 
 
 class AddRowArgs(RowFields):
-    allow_duplicate: bool = Field(default=False, description="Add although similar rows exist (a different finding).")
+    pass
 
 
 class AddRowTool(Tool):
@@ -257,19 +266,20 @@ class AddRowTool(Tool):
     summary = "Adds a finding to the table (from the user or from your own research), unverified."
     description = (
         "Add a row to the table: a finding of the user or of your own research. It starts unverified: call "
-        "verify_findings on it. Code warns about similar rows that exist already (active or archived) and "
-        "adds nothing then, unless allow_duplicate=true. The rules apply: editorial and relocated rows carry "
-        "no requirement; only new, modified or removed rows can be normative."
+        "verify_findings on it. Before it is added, it is compared with EVERY row of the table (active, pending and "
+        "archived): a finding that is already covered, however it is worded or numbered, is never added again, and "
+        "you are told which row covers it. The rules apply: editorial and relocated rows carry no requirement; only "
+        "new, modified or removed rows can be normative."
     )
     how_it_works = (
-        "Applies the row rules in code and compares the row with existing ones.",
-        "Stores it as an active, unverified row (origin: agent).",
+        "Applies the row rules in code.",
+        "Compares the row with every row of the table: obvious repeats are found by code, the rest by a small model that reads the full list of clauses.",
+        "Stores it as an active, unverified row (origin: agent) only if nothing covers it already.",
     )
     Args = AddRowArgs
 
     async def run(self, args: AddRowArgs, ctx: ToolContext) -> ToolOutput:
-        fields = args.model_dump(exclude={"allow_duplicate"})
-        return ToolOutput(await analyzer_of(ctx).op_add_row(fields, allow_duplicate=args.allow_duplicate), summary="row added")
+        return ToolOutput(await analyzer_of(ctx).op_add_row(args.model_dump()), summary="row added")
 
 
 class UpdateRowArgs(BaseModel):

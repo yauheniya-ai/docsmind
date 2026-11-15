@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from docsmind.agent.harness.context import PromptBundle
 from docsmind.agent.harness.tokens import message_tokens
@@ -31,6 +31,7 @@ class LoopResult:
     text: str
     steps: int
     exhausted: bool  # True if the step budget forced the final answer
+    tools_called: list[str] = field(default_factory=list)  # names of the tools the model called, in order
 
 
 def prune_messages(messages: list[Message], budget_tokens: int) -> list[Message]:
@@ -80,6 +81,7 @@ async def run_tool_loop(
     activity under the delegate call that started it."""
     tag = event_tag or {}
     messages = list(bundle.messages)
+    called: list[str] = []
     tools = bundle.tools
     semaphore = asyncio.Semaphore(ctx.config.agent_max_parallel_tools)
 
@@ -113,19 +115,22 @@ async def run_tool_loop(
 
         calls = [] if final_step else response.tool_calls
         if not calls:
-            return LoopResult(text=response.text.strip(), steps=step, exhausted=final_step and bool(tools))
+            return LoopResult(
+                text=response.text.strip(), steps=step, exhausted=final_step and bool(tools), tools_called=called
+            )
 
         if stream_text and response.text.strip():
             # Text before tool calls is narration, not the answer: tell the UI
             # to move it out of the answer area.
             emit(AgentEvent(type="note", data={"text": response.text.strip()}))
 
+        called.extend(c.name for c in calls)
         messages.append(Message(role="assistant", content=response.text, tool_calls=calls))
         results = await asyncio.gather(*(run_one(c) for c in calls))
         messages.extend(results)
 
     # Unreachable: the final step always returns above.
-    return LoopResult(text="", steps=max_steps, exhausted=True)  # pragma: no cover
+    return LoopResult(text="", steps=max_steps, exhausted=True, tools_called=called)  # pragma: no cover
 
 
 EventCallback = Callable[[AgentEvent], None]

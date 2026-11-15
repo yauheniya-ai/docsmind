@@ -162,8 +162,9 @@ These do not depend on the agent following instructions:
 3. **Verification gate.** Candidates are promoted only if `verify_findings` proves them (verbatim proof checks of `verify.py`). A rejected candidate is archived with the reason, so it is not verified again.
 4. **A scan never removes an active row.** Only verification of that row or a user action archives it.
 5. **No hard deletes of findings.** `delete_row` becomes archive (`reason="deleted by user"`); the UI delete and the agent both archive. Hard deletion only cascades from deleting the analysis.
-6. **Every write goes through `ChangeRow.checked()`** and the store's lock (ordinals are assigned on insert).
-7. **The report is never behind the table.** Any report-relevant row change (not `confirmations` or `approved`) after a report was written sets `report_stale=true` internally. Code clears it by rewriting the report: at the end of every agent request, when the Report tab is opened after edits in the panel (`POST /changes/{id}/report/refresh`), and before a Word or Markdown download. The flag is never shown to the user as "outdated"; a rewrite keeps the effort and cost figures of the analysis.
+6. **No repeated rows.** A new row (from the changelog check or `add_row`) is added only after it was compared with every row of the table, active, pending and archived (`admit.py`): code catches the same clause title and kind of change, a small model reads the full list of clauses for the rest. A refused row is not added; its proof, if the existing row lacks it, goes to the existing row.
+7. **Every write goes through `ChangeRow.checked()`** and the store's lock (ordinals are assigned on insert).
+8. **The report is never behind the table.** Any report-relevant row change (not `confirmations` or `approved`) after a report was written sets `report_stale=true` internally. Code clears it by rewriting the report: at the end of every agent request, when the Report tab is opened after edits in the panel (`POST /changes/{id}/report/refresh`), and before a Word or Markdown download. The flag is never shown to the user as "outdated"; a rewrite keeps the effort and cost figures of the analysis.
 
 ## 6. Readers: PDF, Word, scanned pages (section 3 of the original task)
 
@@ -231,9 +232,7 @@ verifier and of in-depth research. What the agent does for typical requests:
 | A scan failed or crashed midway | `scan_documents` again: it continues from the rows saved so far. |
 
 Rows the agent adds from its own research go through the same gate as scan candidates (verification is the
-only way into the table). `add_row` returns near-duplicates found by code (same clause number, or high text
-overlap with an active or archived row), so the agent does not add the same finding twice; there is no LLM
-matcher on this path.
+only way into the table). `add_row` and the changelog check pass the admission gate of invariant 6: a finding that is already in the table is never added twice.
 
 ## 10. Cost tracking
 
@@ -260,7 +259,7 @@ Recommended defaults are first.
 4. ~~Step limit~~ **Decided:** two levels (section 1): 25 steps for the agent's loop per request (a normal request needs under 10), and the existing per-tool limits (8 steps per row verification, 8 for the changelog search) unchanged.
 5. ~~Compatibility~~ **Decided:** `compare()`, `verify_rows()` and the REST routes stay unchanged for the UI and CLI.
 
-6. ~~Cost limit per request~~ **Decided:** a cap of 300 model calls per request (`change_request_max_model_calls`), counting loops inside tools. Calls cannot be estimated up front (a 30-page questionnaire alone takes 100+), so 300 is a rough boundary to be tuned empirically. When hit, the agent stops, saves the table and tells the user what is left to verify.
+6. ~~Cost limit per request~~ **Decided:** a cap of 1000 model calls per request (first set to 300, raised after a 313-call run on a 100-page standard) (`change_request_max_model_calls`), counting loops inside tools. Calls cannot be estimated up front (a 30-page questionnaire alone takes 100+), so 1000 is a rough boundary to be tuned empirically. When hit, the agent stops, saves the table and tells the user what is left to verify.
 
 All decisions are made; implementation follows section 13.
 
@@ -285,7 +284,7 @@ Scripted (fake LLM, `tests/unit/fakes.py`; `test_change_analyzer.py` has 35 test
 - `scan_documents` on a pair with a finished scan: refuses with the date and row count, no model call.
 - A scan that failed midway (and one marked unfinished by a crash) is continued: finished parts are skipped, the model gets the rows so far, nothing is stored twice, the scan is marked finished.
 - "Review chapter 3 again" with an existing table: no scan call; the agent loads the table and verifies or researches (call counter).
-- `add_row` of a near-duplicate: returns the similar rows and does not silently add a second copy.
+- A row that repeats an existing one (same clause, any wording or numbering) is refused by the gate, from `add_row` and from the changelog check alike; its proof goes to the existing row if that lacks it.
 - Candidate rejected by verification: archived with reason, never shown, never shown.
 - Delete a document version: its analyses, rows, archive and report remain; `get_table` still works; `scan_documents` answers "document not in the register".
 - Re-ingest the same file: the analysis is re-linked to the new version id by hash and a scan or verify works again.
@@ -304,7 +303,7 @@ Where the code differs from, or adds to, the plan above:
 - **Handles** are `R1, R2, ...` (ordinal + 1), not `R<ordinal>`.
 - **A check that could not run** (technical failure, every relaunch failed) leaves a candidate **pending**, not archived: only a finished check without proof archives it. The UI shows a pending count and a clock mark.
 - **Editorial, relocated and non-normative candidates** are added to the table by the scan itself (they are never verified in depth); only actionable candidates wait for `verify_findings`.
-- **`add_row` duplicates** are found by code (same clause number or title, or token overlap above 0.6), under the analyzer's lock so parallel calls cannot race.
+- **No repeated rows** (`admit.py`): see invariant 6. The gate runs under the analyzer's lock, so two rows added together cannot both slip past each other. New rows are still appended at the end of the table: placing them at the right position would need deterministic sorting and was left out.
 - **Model-call limit:** the agent's own turns are counted live; a tool that starts past the limit refuses with a message telling the agent to stop and report what is open. Loops already running finish, so the limit can be exceeded by one batch.
 - **Web tools in inner loops** (changelog search, verification) are offered only for public documents.
 - **Run history** is written once at the end of a request (`change_runs`), with per-model and per-tool cost.

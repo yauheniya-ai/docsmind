@@ -157,6 +157,7 @@ function AnalyzerNotes({ info }: { info: AgentInfo }) {
     "The scan is an internal first pass that builds the foundation of the table. It runs once per pair, so you always get the same table, which is then verified and improved over time.",
     "A scan only proposes candidates. A finding joins the table only through verification with verbatim proof.",
     "A scan that failed or crashed midway continues from the rows saved so far; a scan never removes an active row.",
+    "A new row is added only after it was compared with every row of the table: a finding that is already there is never added twice.",
     "Deleted and rejected rows are archived with the reason, never destroyed.",
     "The report always reflects the table: it is rewritten automatically whenever the table changes.",
   ]
