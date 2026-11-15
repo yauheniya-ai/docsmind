@@ -1,5 +1,19 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
-import { BookOpen, Check, ChevronDown, ChevronRight, Download, Loader2, Plus, ShieldCheck, Star, Trash2, X } from "lucide-react"
+import {
+  BookOpen,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Download,
+  Loader2,
+  Plus,
+  RotateCcw,
+  ShieldCheck,
+  Star,
+  Trash2,
+  X,
+} from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,6 +28,7 @@ import {
   type ChangeNature,
   type ChangeRow,
   type ChangeRowInput,
+  type ChangeRun,
   type ChatCitation,
 } from "@/lib/api"
 import type { AnalysisLive } from "@/lib/chat"
@@ -41,7 +56,9 @@ const FIELD_LABELS: { key: keyof ChangeRowInput; label: string; long?: boolean }
 ]
 
 type Filter = "all" | "actionable"
-type Tab = "table" | "report"
+type Tab = "table" | "report" | "history"
+
+const TAB_LABEL: Record<Tab, string> = { table: "table", report: "report", history: "history" }
 
 function NatureBadge({ nature }: { nature: ChangeNature }) {
   return (
@@ -358,7 +375,14 @@ function ReportView({
     return <p className="p-4 text-sm text-muted-foreground">The report is written when the analysis finishes.</p>
   }
   // "(A p.12)" in the report: A is the current version, B the previous one.
-  const pageRefs = detail?.current && detail.previous ? { A: detail.current, B: detail.previous } : undefined
+  // (a deleted document has no page to open: its citations are shown as plain text)
+  const pageRefs =
+    detail?.current?.version_id && detail.previous?.version_id
+      ? {
+          A: { ...detail.current, version_id: detail.current.version_id },
+          B: { ...detail.previous, version_id: detail.previous.version_id },
+        }
+      : undefined
   return (
     <div className="p-4">
       <Markdown text={detail?.report_markdown ?? report} pageRefs={pageRefs} onOpenCitation={onOpenSource} />
@@ -370,6 +394,120 @@ function ReportView({
  * Side panel next to the chat: the change table of one comparison (live while it is being built),
  * its report, and what a person can do with it: filter, check the proof, edit, approve, export.
  */
+function when(iso: string | null): string {
+  if (!iso) return ""
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+}
+
+/** Rows that were rejected by verification or deleted by a person: kept, with the reason, restorable. */
+function ArchiveView({ analysisId, onRestored }: { analysisId: string; onRestored: (row: ChangeRow) => void }) {
+  const [rows, setRows] = useState<ChangeRow[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getChangeArchive(analysisId)
+      .then((r) => {
+        if (!cancelled) setRows(r.rows)
+      })
+      .catch(() => {
+        if (!cancelled) setError("The deleted rows could not be loaded.")
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [analysisId])
+
+  const restore = async (row: ChangeRow) => {
+    try {
+      const restored = await api.restoreChangeRow(analysisId, row.id)
+      setRows((all) => (all ? all.filter((r) => r.id !== row.id) : all))
+      onRestored(restored)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "The row could not be restored.")
+    }
+  }
+
+  if (error) return <p className="p-6 text-center text-sm text-destructive">{error}</p>
+  if (rows === null) return <Skeleton className="m-4 h-24 w-[calc(100%-2rem)]" />
+  if (rows.length === 0) return <p className="p-6 text-center text-sm text-muted-foreground">No rows were deleted or rejected.</p>
+  return (
+    <ul className="divide-y divide-border/40">
+      {rows.map((row) => (
+        <li key={row.id} className="flex items-start gap-3 px-4 py-3 text-sm">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <NatureBadge nature={row.nature} />
+              <span className="line-clamp-1 text-foreground">{row.current_clause || row.previous_clause}</span>
+            </div>
+            <p className="mt-1 line-clamp-2 text-foreground/70">{row.change_description}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {row.archive_reason ?? "Archived"}
+              {row.archived_at ? ` · ${when(row.archived_at)}` : ""}
+            </p>
+          </div>
+          <Button size="sm" variant="outline" className="h-8 shrink-0 gap-1.5" onClick={() => void restore(row)}>
+            <RotateCcw className="h-3.5 w-3.5" />
+            Restore
+          </Button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** What was asked of this table, what each request cost, and how it ended. */
+function HistoryView({ analysisId }: { analysisId: string }) {
+  const [runs, setRuns] = useState<ChangeRun[] | null>(null)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getChangeRuns(analysisId)
+      .then((r) => {
+        if (!cancelled) setRuns(r.runs)
+      })
+      .catch(() => {
+        if (!cancelled) setError(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [analysisId])
+
+  if (error) return <p className="p-6 text-center text-sm text-destructive">The history could not be loaded.</p>
+  if (runs === null) return <Skeleton className="m-4 h-24 w-[calc(100%-2rem)]" />
+  if (runs.length === 0) return <p className="p-6 text-center text-sm text-muted-foreground">No requests recorded yet.</p>
+  return (
+    <ul className="divide-y divide-border/40">
+      {runs.map((run) => {
+        const cost = run.usage.cost
+        return (
+          <li key={run.id} className="px-4 py-3 text-sm">
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="capitalize">
+                {run.kind}
+              </Badge>
+              <span className="text-xs text-muted-foreground">{when(run.started_at)}</span>
+              <span className="ml-auto text-xs text-muted-foreground">{run.outcome}</span>
+            </div>
+            <p className="mt-1 text-foreground/90">{run.request || "Compare the documents."}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {run.steps} steps · {run.usage.model_calls ?? 0} model calls
+              {run.usage.seconds !== undefined ? ` · ${run.usage.seconds} s` : ""}
+              {cost?.usd !== undefined ? ` · $${cost.usd < 1 ? cost.usd.toFixed(4) : cost.usd.toFixed(2)}` : ""}
+              {cost?.cache_hit_rate ? ` · ${Math.round(cost.cache_hit_rate * 100)}% cached` : ""}
+            </p>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 export function ChangePanel({
   analysisId,
   live,
@@ -393,6 +531,8 @@ export function ChangePanel({
   const [error, setError] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<{ id: string; kind: "approve" | "verify" } | null>(null) // the question being asked
   const [verifying, setVerifying] = useState<ReadonlySet<string>>(new Set())
+  const [showDeleted, setShowDeleted] = useState(false)
+  const [refreshingReport, setRefreshingReport] = useState(false)
 
   const running = live?.status === "running"
   // While the scan runs, its rows come from the stream; a re-check keeps showing the stored table.
@@ -459,7 +599,9 @@ export function ChangePanel({
   const remove = (row: ChangeRow) =>
     guarded(async () => {
       await api.deleteChangeRow(analysisId, row.id)
-      setDetail((d) => (d ? { ...d, rows: d.rows.filter((r) => r.id !== row.id) } : d))
+      setDetail((d) =>
+        d ? { ...d, rows: d.rows.filter((r) => r.id !== row.id), archived_count: d.archived_count + 1 } : d,
+      )
     }).catch(() => undefined)
 
   const add = () =>
@@ -494,8 +636,36 @@ export function ChangePanel({
 
   const openProof = (proof: ChangeRow["proof"][number]) => {
     const version = proof.doc === "current" ? current : previous
-    if (version) onOpenSource(pageCitation(version, proof.page ?? null, proof.text))
+    if (version?.version_id) {
+      onOpenSource(pageCitation({ ...version, version_id: version.version_id }, proof.page ?? null, proof.text))
+    }
   }
+
+  // The report always reflects the table: if rows were edited here, rewrite it as soon as it is looked at.
+  const reportStale = Boolean(stored?.analysis.report_stale)
+  useEffect(() => {
+    if (tab !== "report" || !reportStale || refreshingReport) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) setRefreshingReport(true)
+    })
+    api
+      .refreshChangeReport(analysisId)
+      .then((d) => {
+        if (!cancelled) setDetail(d)
+      })
+      .catch(() => {
+        if (!cancelled) setError("The report could not be updated to match the table.")
+      })
+      .finally(() => {
+        if (!cancelled) setRefreshingReport(false)
+      })
+    return () => {
+      cancelled = true
+      setRefreshingReport(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, reportStale, analysisId])
 
   const unverified = rows.filter((r) => isActionable(r) && !r.verified)
   const editable = !streaming && stored !== null
@@ -525,18 +695,18 @@ export function ChangePanel({
 
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/50 px-4 py-2.5">
         <div className="inline-flex rounded-lg bg-muted p-0.5 text-sm">
-          {(["table", "report"] as Tab[]).map((t) => (
+          {(["table", "report", "history"] as Tab[]).map((t) => (
             <button
               key={t}
               type="button"
               onClick={() => setTab(t)}
-              disabled={t === "report" && !hasReport}
+              disabled={(t === "report" && !hasReport) || (t === "history" && !editable)}
               className={cn(
                 "rounded-md px-3 py-1 font-medium capitalize transition-colors disabled:opacity-50",
                 tab === t ? "bg-background text-foreground shadow" : "text-muted-foreground",
               )}
             >
-              {t}
+              {TAB_LABEL[t]}
             </button>
           ))}
         </div>
@@ -605,14 +775,24 @@ export function ChangePanel({
         <div className="flex shrink-0 items-center gap-2 border-b border-border/50 bg-primary/5 px-4 py-2 text-xs text-foreground/80">
           <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
           {live?.statusText ?? "Working…"}
-          {live?.removed ? <span className="text-muted-foreground">· {live.removed} unproven removed</span> : null}
+          {live?.removed ? <span className="text-muted-foreground">· {live.removed} left the table (archived)</span> : null}
+        </div>
+      )}
+      {refreshingReport && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border/50 bg-primary/5 px-4 py-2 text-xs text-foreground/80">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+          Updating the report to match the table…
         </div>
       )}
       {error && <div className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-xs text-destructive">{error}</div>}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {tab === "report" ? (
-          <ReportView report={stored?.analysis.report ?? null} detail={stored} onOpenSource={onOpenSource} />
+        {tab === "history" && stored ? (
+          <HistoryView analysisId={analysisId} />
+        ) : tab === "report" ? (
+          <div className={cn(refreshingReport && "opacity-50")}>
+            <ReportView report={stored?.analysis.report ?? null} detail={stored} onOpenSource={onOpenSource} />
+          </div>
         ) : failed && !live?.rows.length ? (
           <p className="p-6 text-center text-sm text-muted-foreground">This change analysis could not be loaded.</p>
         ) : !streaming && !stored && !live?.rows.length ? (
@@ -652,6 +832,9 @@ export function ChangePanel({
                       onClick={() => setOpen(isOpen ? null : row.id)}
                     >
                       <td className="relative px-2 py-2" onClick={(e) => e.stopPropagation()}>
+                        {row.status === "candidate" ? (
+                          <Clock className="mx-auto h-4 w-4 text-muted-foreground" aria-label="Pending verification" />
+                        ) : (
                         <VerifiedMark
                           row={row}
                           busy={verifying.has(row.id)}
@@ -660,6 +843,7 @@ export function ChangePanel({
                             setConfirm(confirm?.id === row.id && confirm.kind === "verify" ? null : { id: row.id, kind: "verify" })
                           }
                         />
+                        )}
                         {confirm?.id === row.id && confirm.kind === "verify" && (
                           <ConfirmPopover
                             question="Launch a verification?"
@@ -734,6 +918,39 @@ export function ChangePanel({
             </tbody>
           </table>
         )}
+
+        {tab === "table" && editable && stored && stored.archived_count > 0 && (
+          <div className="border-t border-border/40 px-4 py-3">
+            <button
+              type="button"
+              onClick={() => setShowDeleted((v) => !v)}
+              aria-expanded={showDeleted}
+              className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              {showDeleted ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              {showDeleted ? "Hide" : "Show"} deleted rows ({stored.archived_count})
+            </button>
+            {showDeleted && (
+              <div className="-mx-4 mt-2">
+                <ArchiveView
+                  key={stored.archived_count}
+                  analysisId={analysisId}
+                  onRestored={(row) =>
+                    setDetail((d) =>
+                      d
+                        ? {
+                            ...d,
+                            rows: [...d.rows, row].sort((a, b) => a.ordinal - b.ordinal),
+                            archived_count: Math.max(0, d.archived_count - 1),
+                          }
+                        : d,
+                    )
+                  }
+                />
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {tab === "table" && editable && rows.length > 0 && (
@@ -743,6 +960,11 @@ export function ChangePanel({
           </span>
           <Badge variant="secondary">{rows.filter((r) => r.verified).length} verified</Badge>
           <Badge variant="secondary">{rows.filter((r) => r.approved).length} approved</Badge>
+          {stored && stored.pending_count > 0 && (
+            <Badge variant="secondary" title="Found by a scan, not in the table until the Change Analyzer verifies them">
+              {stored.pending_count} pending verification
+            </Badge>
+          )}
           {unverified.length > 0 && (
             <Button
               size="sm"

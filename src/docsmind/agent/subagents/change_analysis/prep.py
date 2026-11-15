@@ -374,3 +374,4 @@ def part_inputs(prep: Prepared, part: ScanPart, total_parts: int) -> str:
         diff = render_diff(prep, part.lo, part.hi)
         pieces.append(f"<diff>\n{diff}\n</diff>")
     return "\n\n".join(pieces)
+

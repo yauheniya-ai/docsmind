@@ -1,0 +1,121 @@
+%%{init: {
+  "flowchart": {
+    "wrappingWidth": 360
+  },
+  "themeVariables": {
+    "fontFamily": "Plus Jakarta Sans",
+    "lineColor": "#626d84",
+    "clusterBkg": "#faf8f5",
+    "clusterBorder": "#e5e2dc"
+  }
+}}%%
+%% Target state of the Agents page once docs/change-analyzer-task.md is implemented.
+flowchart TB
+    subgraph LEGEND["Compared with today"]
+        direction LR
+        L1["Unchanged"]
+        L2["Changed"]
+        L3["New"]
+    end
+
+    USER["User"]
+
+    subgraph HARNESS["Harness: plain code around every agent"]
+        direction LR
+        ROUTER["Router<br/>simple, complex or delegate<br/>delegate skips the planner"]
+        PLANNER["Planner<br/>complex questions only"]
+        CTX["Context, summaries, memory,<br/>stable cacheable prefix"]
+        COST["Cost tracking<br/>uncached, cached read, cache write, output<br/>per call, tool, agent and run"]
+    end
+
+    subgraph MIND["Mind: answers from the documents"]
+        direction TB
+        MINDAGENT(["Mind<br/>all documents in the register"])
+        MCORE["Core tools<br/>Search, Grep, Read Pages, Get Outline,<br/>List Documents, Load Table,<br/>Web Search, Read URL, Page Vision,<br/>Create File: txt, md, csv, xlsx"]
+        DELEGATE["Delegate<br/>passes the user's request verbatim<br/>plus the two documents or an analysis"]
+        MINDAGENT --- MCORE
+        MINDAGENT --- DELEGATE
+    end
+
+    subgraph CA["Change Analyzer: one agent, one toolbox, decides its own order"]
+        direction TB
+        CAAGENT(["Change Analyzer<br/>specialist prompt, typical order is only a hint<br/>scope: the document pair<br/>step budget, parallel tool calls"])
+
+        subgraph CCORE["Core tools: shared with the Mind"]
+            direction LR
+            CC1["Search, Grep, Read Pages,<br/>Get Outline, Load Table"]
+            CC2["Web Search"]
+            CC3["Read URL<br/>HTML, text, PDF, Word<br/>vision fallback for scanned pages"]
+            CC4["Page Vision"]
+            CC5["Create File<br/>txt, md, csv, xlsx<br/>or the stored change table"]
+        end
+
+        subgraph CTABLE["Table tools"]
+            direction LR
+            TT1["Get Table, Get Row"]
+            TT2["Add Row, Update Row"]
+            TT3["Archive Row, Restore Row"]
+        end
+
+        subgraph CADV["Advanced tools: steps of the old pipeline, each with its own model"]
+            direction LR
+            AT1["Check Versions<br/>small model"]
+            AT2["Scan Documents<br/>long-context model, once per pair<br/>first pass, refused when finished, resumed if interrupted<br/>mode auto, diff or full"]
+            AT3["Find Changelog<br/>in the documents and online"]
+            AT4["Verify Findings<br/>strong model, proof checked in code"]
+            AT5["Write Report"]
+        end
+
+        CAAGENT --- CCORE
+        CAAGENT --- CTABLE
+        CAAGENT --- CADV
+    end
+
+    subgraph STORE["Persistent store: stands on its own, never deleted with a document"]
+        direction LR
+        STAGING["Staging<br/>candidate rows from a scan"]
+        GATE["Gate, enforced in code<br/>verification is the only way into the table<br/>a scan never removes an active row<br/>an interrupted scan continues where it stopped"]
+        TABLE["Change table<br/>active rows with proof, report, run history"]
+        ARCHIVE["Archive<br/>rejected and deleted rows<br/>with reason, run and date"]
+        STAGING --> GATE
+        GATE -->|"verified"| TABLE
+        GATE -->|"rejected"| ARCHIVE
+    end
+
+    USER --> ROUTER
+    ROUTER -->|"simple, delegate"| MINDAGENT
+    ROUTER -->|"complex"| PLANNER --> MINDAGENT
+    MINDAGENT -->|"answer"| USER
+
+    DELEGATE ==>|"request, documents"| CAAGENT
+    CAAGENT ==>|"short status"| MINDAGENT
+
+    AT2 -->|"candidates"| STAGING
+    AT4 --> GATE
+    CTABLE <--> TABLE
+    CTABLE --> ARCHIVE
+    TABLE -.->|"loaded first on every request"| CAAGENT
+
+    %% Palette from frontend/src/index.css
+    %%   unchanged = --primary (navy), changed = --accent (terracotta),
+    %%   new = --secondary / --muted-foreground (dashed)
+    classDef same fill:#1e2b3e,stroke:#1e2b3e,color:#faf8f5
+    classDef changed fill:#d04725,stroke:#d04725,color:#ffffff
+    classDef new fill:#eeece8,stroke:#626d84,color:#1b2232,stroke-dasharray:5 4
+    classDef tool fill:#ffffff,stroke:#e5e2dc,color:#1b2232
+    classDef actor fill:#ffffff,stroke:#e5e2dc,color:#1b2232
+
+    class L1,MINDAGENT,PLANNER,CTX same
+    class L2,ROUTER,DELEGATE,CAAGENT,MCORE,CC1,CC2,CC4 changed
+    class L3,CC3,CC5,COST,TT1,TT2,TT3,AT1,AT2,AT3,AT4,AT5,STAGING,ARCHIVE,GATE new
+    class TABLE changed
+    class USER actor
+
+    style HARNESS fill:#faf8f5,stroke:#e5e2dc,color:#1b2232
+    style MIND fill:#ffffff,stroke:#e5e2dc,color:#1b2232
+    style CA fill:#ffffff,stroke:#e5e2dc,color:#1b2232
+    style CCORE fill:#faf8f5,stroke:#e5e2dc,color:#1b2232
+    style CTABLE fill:#faf8f5,stroke:#e5e2dc,color:#1b2232
+    style CADV fill:#faf8f5,stroke:#e5e2dc,color:#1b2232
+    style STORE fill:#ffffff,stroke:#e5e2dc,color:#1b2232
+    style LEGEND fill:#ffffff,stroke:#e5e2dc,color:#626d84

@@ -41,7 +41,7 @@ from docsmind.domain.agent import (
     StoredMessage,
     Usage,
 )
-from docsmind.domain.changes import ChangeResult, ChangeRow
+from docsmind.domain.changes import ChangeAnalysis, ChangeResult, ChangeRow
 from docsmind.domain.errors import (
     AgentError,
     ConversationNotFoundError,
@@ -87,6 +87,7 @@ class DocsmindAgent:
         self.main_tools = self.tools.for_executor()
         self.builder = ContextBuilder(config)
         self._background: set[asyncio.Task] = set()
+        self._report_locks: dict[UUID, asyncio.Lock] = {}  # one report rewrite at a time per analysis
 
     # -- lazily-resolved collaborators (so importing never needs SDKs/DB) --------
 
@@ -207,11 +208,6 @@ class DocsmindAgent:
             "text": "<conversation_summary>\n<running summary of older turns>\n</conversation_summary>",
             "cached": False,
         }
-        interpreted = {
-            "label": "Interpreted question",
-            "text": "<interpreted_question>\n<the router's standalone rewrite>\n</interpreted_question>",
-            "cached": False,
-        }
         plan = {
             "label": "Plan",
             "text": (
@@ -224,7 +220,7 @@ class DocsmindAgent:
                 "name": "Mind",
                 "role": "Orchestrator",
                 "system_prompt": prompts.EXECUTOR,
-                "context": [register, memory, summary, interpreted, plan],
+                "context": [register, memory, summary, plan],
                 "user_prompt": (
                     "The user's latest message, sent after the recent conversation history "
                     "(older turns are folded into the summary above)."
@@ -245,8 +241,10 @@ class DocsmindAgent:
                     "context": [register, memory, summary],
                     "user_prompt": "The user's latest message, after the last two exchanges of history.",
                     "description": (
-                        "Decides whether a question is simple or complex, and rewrites follow-ups into "
-                        "standalone questions. One quick model call, no tools."
+                        "Decides how the turn is handled: simple (straight to the Mind), complex (plan first) or "
+                        "delegate (a version comparison or work on a change table: straight to the Change Analyzer, "
+                        "no plan). One call to the small model, at most 300 output tokens, no tools. It sees the "
+                        "register, the last two exchanges and your whole message, and never rewrites it."
                     ),
                     "model": fast,
                 },
@@ -254,8 +252,8 @@ class DocsmindAgent:
                     "name": "planner",
                     "role": "Planning",
                     "system_prompt": prompts.PLANNER,
-                    "context": [register, memory, summary, interpreted],
-                    "user_prompt": "The standalone question produced by the router.",
+                    "context": [register, memory, summary],
+                    "user_prompt": "The user's latest message.",
                     "description": (
                         "For complex questions, drafts a short step-by-step plan before the Mind starts "
                         "working. One model call, no tools: a stage of the Mind, not a subagent."
@@ -268,6 +266,51 @@ class DocsmindAgent:
                 "summarizer_model": fast,
                 "memory_model": fast,
                 "memory_enabled": self.config.agent_memory_enabled,
+                "components": [
+                    {
+                        "name": "context_builder",
+                        "title": "Context builder",
+                        "model": None,
+                        "enabled": True,
+                        "description": (
+                            "Plain code. Builds the prompt of every call: the agent's role, the register of documents, "
+                            "recalled memory, the conversation summary and the recent history. The stable part comes "
+                            "first with a cache mark, so the provider's prompt caching can reuse it."
+                        ),
+                    },
+                    {
+                        "name": "summarizer",
+                        "title": "Summarizer",
+                        "model": fast,
+                        "enabled": True,
+                        "description": (
+                            f"When a conversation outgrows its history budget ({self.config.agent_history_budget_tokens:,} "
+                            f"tokens), a small model folds the older turns into a running summary. The last "
+                            f"{self.config.agent_recent_turns} exchanges always stay word for word."
+                        ),
+                    },
+                    {
+                        "name": "memory_writer",
+                        "title": "Memory writer",
+                        "model": fast if self.config.agent_memory_enabled else None,
+                        "enabled": self.config.agent_memory_enabled,
+                        "description": (
+                            "After each answer, a small model decides whether anything is worth keeping: facts about "
+                            "the user and notes about documents. They are recalled in later conversations and shown to "
+                            "the agent as possibly outdated, to be checked against the documents."
+                        ),
+                    },
+                    {
+                        "name": "cost_tracking",
+                        "title": "Cost tracking",
+                        "model": None,
+                        "enabled": True,
+                        "description": (
+                            "Plain code. Counts uncached, cached-read, cache-write and output tokens of every model "
+                            "call and prices them per model, per tool and per run, with the cache hit rate."
+                        ),
+                    },
+                ],
             },
             "subagents": [
                 {
@@ -302,6 +345,8 @@ class DocsmindAgent:
             "limits": {
                 "max_steps": self.config.agent_max_steps,
                 "verify_max_steps": self.config.change_verify_max_steps,
+                "change_agent_max_steps": self.config.change_agent_max_steps,
+                "change_request_max_model_calls": self.config.change_request_max_model_calls,
             },
         }
 
@@ -378,7 +423,11 @@ class DocsmindAgent:
             raise AgentError("Pass two different, ingested document versions.")
         env = self._make_env(on_event or (lambda _event: None), SUBAGENTS["change_analyzer"].tools)
         analyzer = ChangeAnalyzer(env, catalog)
-        message = await analyzer.compare(docs[0], docs[1], notes)
+        request = notes.strip() or (
+            "Compare the two documents: check that they are versions, scan, look for a changelog, verify the "
+            "compliance-relevant findings and write the report."
+        )
+        message = await analyzer.run(request, documents=(docs[0], docs[1]))
         if analyzer.analysis_id is None:
             return ChangeResult(message=message)
         analysis = await self.changes.get_analysis(analyzer.analysis_id)
@@ -398,6 +447,42 @@ class DocsmindAgent:
         await analyzer.verify_existing(analysis_id, [str(r) for r in row_ids])
         out = [await self.changes.get_row(r) for r in row_ids]
         return [r for r in out if r is not None]
+
+    async def refresh_report(self, analysis_id: UUID) -> ChangeAnalysis:
+        """Bring the report up to date with the table (after rows were edited outside a chat). A report that
+        is current is returned as it is. -> the analysis as it is afterwards."""
+        lock = self._report_locks.setdefault(analysis_id, asyncio.Lock())
+        async with lock:
+            analysis = await self.changes.get_analysis(analysis_id)
+            if analysis is None:
+                raise AgentError("That change analysis does not exist.")
+            if analysis.report and not analysis.report_stale:
+                return analysis
+            if not await self.changes.list_rows(analysis_id):
+                return analysis
+            env = self._make_env(lambda _event: None, SUBAGENTS["change_analyzer"].tools)
+            analyzer = ChangeAnalyzer(env, Catalog([]))
+            analyzer.analysis = analysis
+            await analyzer.op_write_report(reuse_effort=True)
+            return await self.changes.get_analysis(analysis_id) or analysis
+
+    async def _analysis_lines(self, catalog: Catalog) -> list[str]:
+        """One line per stored analysis whose two documents are both in `catalog` (what the Mind may refer to)."""
+        try:
+            stored = await self.changes.list_analyses(limit=200)
+        except Exception:
+            log.exception("Could not list change analyses for the register")
+            return []
+        lines: list[str] = []
+        for a in stored:
+            current, previous = catalog.by_version(a["current_version_id"]), catalog.by_version(a["previous_version_id"])
+            if current is None or previous is None:
+                continue
+            lines.append(
+                f"- analysis {a['id']}: {current.handle} ({current.label}) vs {previous.handle} ({previous.label}), "
+                f"{a['row_count']} rows ({a['verified_count']} verified)"
+            )
+        return lines
 
     def _make_env(self, emit: Emit, tool_names: tuple[str, ...]) -> RunEnv:
         return RunEnv(
@@ -481,6 +566,7 @@ class DocsmindAgent:
         if collection:
             rows = [r for r in rows if r["collection"] == collection]
         catalog = Catalog.from_rows(rows)
+        catalog.analyses = await self._analysis_lines(catalog)
 
         memory_items = []
         if self.config.agent_memory_enabled:
@@ -499,13 +585,11 @@ class DocsmindAgent:
 
         # --- orchestrator -> planner -----------------------------------------------
         decision = await Orchestrator(fast, self.builder).route(state, usage)
-        state.interpreted_question = decision.question
         emit(
             AgentEvent(
                 type="route",
                 data={
                     "route": decision.route,
-                    "question": decision.question,
                     "documents": len(catalog),
                     # Lets the UI show titles instead of D1/D2 in the activity trace.
                     "catalog": [{"handle": d.handle, "title": d.title, "label": d.label} for d in catalog.docs],
@@ -602,16 +686,21 @@ class DocsmindAgent:
             env = self._make_env(emit, SUBAGENTS[name].tools)
             analyzer = ChangeAnalyzer(env, catalog)
             try:
+                analysis_id = None
                 if extra.get("analysis_id"):
                     try:
                         analysis_id = UUID(str(extra["analysis_id"]).strip())
                     except ValueError as exc:
                         raise ToolInputError("analysis_id is not a valid id.") from exc
-                    return await analyzer.verify_existing(analysis_id, extra.get("row_ids") or [], task)
-                docs = catalog.resolve_many(documents)
-                if len(docs) != 2:
-                    raise ToolInputError("Pass exactly two documents: [current, previous].")
-                return await analyzer.compare(docs[0], docs[1], task)
+                pair = None
+                if documents:
+                    docs = catalog.resolve_many(documents)
+                    if len(docs) != 2:
+                        raise ToolInputError("Pass exactly two documents: [current, previous].")
+                    pair = (docs[0], docs[1])
+                if pair is None and analysis_id is None:
+                    raise ToolInputError("Pass documents=[current, previous] or an analysis_id.")
+                return await analyzer.run(task, documents=pair, analysis_id=analysis_id)
             finally:
                 usage.add(env.usage)
 

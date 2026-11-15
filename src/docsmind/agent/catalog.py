@@ -23,6 +23,7 @@ class CatalogDoc:
     label: str
     page_count: int | None
     word_count: int | None
+    content_hash: str = ""  # identifies the file; analyses of a pair of documents are keyed by it
 
     def line(self) -> str:
         parts = [f"{self.handle} | {self.title} | {self.collection} / {self.label}"]
@@ -36,6 +37,7 @@ class CatalogDoc:
 class Catalog:
     def __init__(self, docs: list[CatalogDoc]) -> None:
         self.docs = docs
+        self.analyses: list[str] = []  # one line per stored change analysis of these documents (set by the agent)
         self._by_handle = {d.handle: d for d in docs}
         self._by_version = {d.version_id: d for d in docs}
 
@@ -51,6 +53,7 @@ class Catalog:
                     label=row["label"],
                     page_count=row.get("page_count"),
                     word_count=row.get("word_count"),
+                    content_hash=row.get("content_hash") or "",
                 )
                 for i, row in enumerate(rows, start=1)
             ]
@@ -82,4 +85,7 @@ class Catalog:
     def render(self) -> str:
         if not self.docs:
             return "(no documents are available)"
-        return "\n".join(d.line() for d in self.docs)
+        lines = [d.line() for d in self.docs]
+        if self.analyses:
+            lines += ["", "Change analyses that exist (one table per pair of documents):", *self.analyses]
+        return "\n".join(lines)

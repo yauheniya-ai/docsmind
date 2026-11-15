@@ -53,10 +53,10 @@ class DocsmindConfig(BaseSettings):
     # "none"; the adapter falls back to "none" automatically when that happens.
     openai_reasoning_effort: str | None = None
 
-    # --- agent (the Mind) ---
-    # Cheaper/faster model for the orchestrator, summarizer and memory writer.
-    # Falls back to `llm_model` when unset.
+    # Cheaper/faster model for the small jobs of every agent: the router, the summarizer, the memory writer, the
+    # Change Analyzer's versions check and changelog matching. Falls back to `llm_model` when unset.
     agent_fast_model: str | None = None
+    # --- agent (the Mind) ---
     agent_max_steps: int = 8  # tool-loop iterations per turn (executor)
     agent_max_output_tokens: int = 2048
     agent_max_parallel_tools: int = 4
@@ -67,12 +67,19 @@ class DocsmindConfig(BaseSettings):
     agent_recent_turns: int = 4  # user/assistant pairs always kept verbatim
     agent_memory_enabled: bool = True
 
-    # --- web access (Change Analyzer only) ---
-    # Tavily API key (https://tavily.com). Unset = the `web_search` tool is not offered; `fetch_url`
+    # --- web access (every agent) ---
+    # Tavily API key (https://tavily.com). Unset = the `web_search` tool is not offered; `read_url`
     # (read one public web page) needs no key and stays available.
     web_search_api_key: str | None = None
     web_timeout_s: float = 15.0  # per web request
     web_fetch_max_bytes: int = 2_000_000  # page bytes read before giving up
+    read_url_max_bytes: int = 25_000_000  # a PDF or Word file `read_url` downloads (a larger one is refused)
+
+    # Price overrides per model prefix, USD per 1M tokens, as JSON in DOCSMIND_MODEL_PRICES, e.g.
+    # {"gpt-6.1-terra": {"input": 1.0, "cached_read": 0.1, "cache_write": 1.0, "output": 5.0}}.
+    # Any field may be left out: it then comes from the built-in table (pricing.py), and a missing
+    # cached or cache-write price falls back to the input price (the cost is then an upper bound).
+    model_prices: dict[str, dict[str, float]] = {}
 
     # --- change analyzer ---
     # Share of the current version's sentences that changed. Below it the scan model sees the
@@ -96,6 +103,15 @@ class DocsmindConfig(BaseSettings):
     change_vision_dpi: int = 130  # resolution of page images for `page_vision`
     change_vision_max_output_tokens: int = 1_500  # per `page_vision` answer
     change_table_max_bytes: int = 10_000_000  # largest spreadsheet `load_table` downloads
+    # The Change Analyzer is an agent: its own loop is capped in steps (one model turn, parallel tool
+    # calls count once), and the whole request in model calls (loops inside tools included). The call
+    # cap is a rough boundary to be tuned empirically: a 30-page questionnaire alone takes 100+ calls.
+    change_agent_max_steps: int = 25
+    change_request_max_model_calls: int = 300
+    # Readers and files (core tools of every agent).
+    read_url_min_chars_per_page: int = 100  # fewer characters on a PDF page: it needs `vision_pages`
+    create_file_max_bytes: int = 5_000_000
+    create_file_max_cells: int = 50_000  # model-supplied cells in one csv/xlsx
 
     # --- ingestion ---
     chunk_size_tokens: int = 700

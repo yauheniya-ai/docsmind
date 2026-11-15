@@ -36,7 +36,7 @@ export interface AnalysisCounts {
 export type ChatEvent =
   | {
       type: "route"
-      data: { route: "simple" | "complex"; question: string; documents: number; catalog: CatalogEntry[] }
+      data: { route: "simple" | "complex" | "delegate"; documents: number; catalog: CatalogEntry[] }
     }
   | { type: "plan"; data: { steps: string[] } }
   | { type: "tool_start"; data: { id: string; name: string; args: Record<string, unknown>; subagent?: string } }
@@ -69,7 +69,7 @@ export type ChatEvent =
         answer: string
         citations: ChatCitation[]
         conversation_id: string
-        route: "simple" | "complex"
+        route: "simple" | "complex" | "delegate"
         plan: string[]
       }
     }
@@ -135,7 +135,7 @@ export interface Turn {
   id: string
   question: string
   status: "running" | "done" | "error" | "stopped"
-  route?: "simple" | "complex"
+  route?: "simple" | "complex" | "delegate"
   catalog: CatalogEntry[]
   plan: string[]
   trace: TraceItem[]
@@ -169,7 +169,7 @@ export function storedTurn(
   question: string,
   answer: string,
   citations: ChatCitation[],
-  meta: { route?: "simple" | "complex"; plan?: string[]; analyses?: string[] },
+  meta: { route?: "simple" | "complex" | "delegate"; plan?: string[]; analyses?: string[] },
 ): Turn {
   return {
     ...newTurn(question),

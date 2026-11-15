@@ -20,7 +20,6 @@ from docsmind.agent import prompts
 from docsmind.agent.catalog import Catalog
 from docsmind.agent.harness.tokens import message_tokens
 from docsmind.agent.sources import strip_markers
-from docsmind.agent.subagents.specs import SubagentSpec
 from docsmind.config import DocsmindConfig
 from docsmind.domain.agent import (
     MemoryItem,
@@ -39,7 +38,6 @@ class TurnState:
     history: list[StoredMessage] = field(default_factory=list)  # not yet summarized
     summary: str | None = None
     memory: list[MemoryItem] = field(default_factory=list)
-    interpreted_question: str | None = None
     plan: Plan | None = None
 
 
@@ -71,8 +69,6 @@ class ContextBuilder:
             )
         if state.summary:
             parts.append(f"<conversation_summary>\n{state.summary}\n</conversation_summary>")
-        if state.interpreted_question and state.interpreted_question.strip() != state.question.strip():
-            parts.append(f"<interpreted_question>\n{state.interpreted_question}\n</interpreted_question>")
         if with_plan and state.plan and state.plan.steps:
             steps = "\n".join(f"{i}. {s}" for i, s in enumerate(state.plan.steps, start=1))
             parts.append(
@@ -131,8 +127,7 @@ class ContextBuilder:
         volatile = self._volatile_block(state, with_plan=False)
         if volatile:
             system.append(volatile)
-        question = state.interpreted_question or state.question
-        return PromptBundle(system=system, messages=[Message(role="user", content=question)])
+        return PromptBundle(system=system, messages=[Message(role="user", content=state.question)])
 
     def executor(self, state: TurnState, tools: list[ToolSpec]) -> PromptBundle:
         # One cache breakpoint, at the end of the stable prefix (role + register).
@@ -142,13 +137,3 @@ class ContextBuilder:
             system.append(volatile)
         messages = [*self._history(state), Message(role="user", content=state.question)]
         return PromptBundle(system=system, messages=messages, tools=tools)
-
-    def subagent(
-        self, spec: SubagentSpec, task: str, catalog: Catalog, tools: list[ToolSpec]
-    ) -> PromptBundle:
-        """Fresh context by design: no history, no memory, no plan — just the
-        role, the register and the task."""
-        system = [SystemBlock(text=spec.prompt), self._register_block(catalog)]
-        return PromptBundle(
-            system=system, messages=[Message(role="user", content=task)], tools=tools
-        )

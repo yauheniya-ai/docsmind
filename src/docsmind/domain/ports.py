@@ -22,7 +22,7 @@ from docsmind.domain.agent import (
     ToolChoice,
     ToolSpec,
 )
-from docsmind.domain.changes import ChangeAnalysis, ChangeRow
+from docsmind.domain.changes import ChangeAnalysis, ChangeRow, ChangeRun
 from docsmind.domain.documents import Chunk, Document, DocumentVersion, ParsedDocument
 
 
@@ -176,5 +176,30 @@ class ChangeStore(Protocol):
     async def delete_row(self, row_id: UUID) -> bool:
         ...
 
-    async def list_rows(self, analysis_id: UUID) -> list[ChangeRow]:
+    async def list_rows(self, analysis_id: UUID, status: str | None = "active") -> list[ChangeRow]:
+        """The rows with that status in table order (`status=None`: every row)."""
+        ...
+
+    async def archive_row(self, row_id: UUID, reason: str, run_id: UUID | None = None) -> ChangeRow | None:
+        """Moves a row out of the table into the archive, with the reason."""
+        ...
+
+    async def restore_row(self, row_id: UUID) -> ChangeRow | None:
+        ...
+
+    async def find_analysis(self, current_hash: str, previous_hash: str) -> ChangeAnalysis | None:
+        """The analysis of this ordered pair of content hashes (the newest if there are several)."""
+        ...
+
+    async def relink_versions(self, content_hash: str, version_id: UUID) -> int:
+        """Points analyses of a re-ingested file at its new version. -> how many links were set."""
+        ...
+
+    async def add_run(self, run: ChangeRun) -> None:
+        ...
+
+    async def update_run(self, run_id: UUID, **fields: Any) -> None:
+        ...
+
+    async def list_runs(self, analysis_id: UUID) -> list[ChangeRun]:
         ...

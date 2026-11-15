@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from docsmind.agent.subagents.change_analysis.export import export_filename, info_rows, rows_to_xlsx
 from docsmind.agent.subagents.change_analysis.report_export import markdown_to_docx, report_markdown
 from docsmind.agent.subagents.change_analysis.rows import row_to_json
-from docsmind.domain.changes import Binding, ChangeRow, Nature
+from docsmind.domain.changes import CLAIM_FIELDS, Binding, ChangeRow, Nature
 from docsmind.domain.errors import AgentError, LLMConfigurationError, ToolInputError
 from docsmind.server.routes.chat import get_agent
 
@@ -26,8 +26,6 @@ router = APIRouter(tags=["changes"])
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-# Editing any of these changes the claim a row makes, so earlier verification no longer applies.
-CLAIM_FIELDS = ("current_clause", "previous_clause", "nature", "compliance_requirement", "binding")
 
 
 class RowIn(BaseModel):
@@ -85,20 +83,30 @@ async def get_change(request: Request, analysis_id: UUID) -> dict:
     agent = get_agent(request)
     analysis = await _analysis(request, analysis_id)
     rows = await agent.changes.list_rows(analysis_id)
+    linked = [v for v in (analysis.current_version_id, analysis.previous_version_id) if v is not None]
     versions = {
-        row["id"]: {"version_id": str(row["id"]), "title": row["title"], "label": row["label"]}
-        for row in await agent.repo.list_catalog([analysis.current_version_id, analysis.previous_version_id])
+        row["id"]: {"version_id": str(row["id"]), "title": row["title"], "label": row["label"], "deleted": False}
+        for row in (await agent.repo.list_catalog(linked) if linked else [])
     }
+
+    def describe(version_id, snapshot: dict) -> dict | None:
+        """The live document, or what was saved about it when it has been deleted."""
+        if version_id in versions:
+            return versions[version_id]
+        if not snapshot:
+            return None
+        return {"version_id": None, "title": snapshot.get("title", ""), "label": snapshot.get("label", ""), "deleted": True}
+
+    current = describe(analysis.current_version_id, analysis.current_doc)
+    previous = describe(analysis.previous_version_id, analysis.previous_doc)
     return {
         "analysis": analysis.model_dump(mode="json"),
-        "current": versions.get(analysis.current_version_id),
-        "previous": versions.get(analysis.previous_version_id),
+        "current": current,
+        "previous": previous,
+        "archived_count": len(await agent.changes.list_rows(analysis_id, status="archived")),
+        "pending_count": len(await agent.changes.list_rows(analysis_id, status="candidate")),
         "rows": [row_to_json(r) for r in rows],
-        "report_markdown": report_markdown(
-            analysis,
-            _version_name(versions.get(analysis.current_version_id)),
-            _version_name(versions.get(analysis.previous_version_id)),
-        ),
+        "report_markdown": report_markdown(analysis, _version_name(current), _version_name(previous)),
     }
 
 
@@ -153,9 +161,48 @@ async def verify_rows(request: Request, analysis_id: UUID, body: VerifyIn) -> di
 
 @router.delete("/changes/{analysis_id}/rows/{row_id}")
 async def delete_row(request: Request, analysis_id: UUID, row_id: UUID) -> dict:
+    """"Deleting" a row archives it (kept with the reason, listed under "Show deleted", restorable)."""
     await _row(request, analysis_id, row_id)
-    await get_agent(request).changes.delete_row(row_id)
-    return {"deleted": True, "id": str(row_id)}
+    await get_agent(request).changes.archive_row(row_id, "Deleted by user")
+    return {"deleted": True, "archived": True, "id": str(row_id)}
+
+
+@router.get("/changes/{analysis_id}/archive")
+async def list_archive(request: Request, analysis_id: UUID) -> dict:
+    """Rows that were rejected by verification or deleted by a person, with the reason and date."""
+    await _analysis(request, analysis_id)
+    rows = await get_agent(request).changes.list_rows(analysis_id, status="archived")
+    return {"rows": [row_to_json(r) for r in rows]}
+
+
+@router.post("/changes/{analysis_id}/rows/{row_id}/restore")
+async def restore_row(request: Request, analysis_id: UUID, row_id: UUID) -> dict:
+    row = await _row(request, analysis_id, row_id)
+    if row.status != "archived":
+        raise HTTPException(status_code=422, detail="Only an archived row can be restored.")
+    restored = await get_agent(request).changes.restore_row(row_id)
+    return row_to_json(restored)
+
+
+@router.post("/changes/{analysis_id}/report/refresh")
+async def refresh_report(request: Request, analysis_id: UUID) -> dict:
+    """Rewrite the report from the table as it is now (the table was edited since the report was written).
+    One model call; a report that is current is left alone."""
+    await _analysis(request, analysis_id)
+    try:
+        analysis = await get_agent(request).refresh_report(analysis_id)
+    except LLMConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except AgentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return await get_change(request, analysis.id)
+
+
+@router.get("/changes/{analysis_id}/runs")
+async def list_runs(request: Request, analysis_id: UUID) -> dict:
+    await _analysis(request, analysis_id)
+    runs = await get_agent(request).changes.list_runs(analysis_id)
+    return {"runs": [r.model_dump(mode="json") for r in runs]}
 
 
 @router.get("/changes/{analysis_id}/export.xlsx")
@@ -173,10 +220,8 @@ async def export_xlsx(
         rows = [r for r in rows if r.actionable]
     if natures:
         rows = [r for r in rows if r.nature in natures]
-    titles = {
-        row["id"]: row["title"]
-        for row in await agent.repo.list_catalog([analysis.current_version_id, analysis.previous_version_id])
-    }
+    linked = [v for v in (analysis.current_version_id, analysis.previous_version_id) if v is not None]
+    titles = {row["id"]: row["title"] for row in (await agent.repo.list_catalog(linked) if linked else [])}
     current = titles.get(analysis.current_version_id) or analysis.meta.get("current_title", "")
     previous = titles.get(analysis.previous_version_id) or analysis.meta.get("previous_title", "")
     info = info_rows(analysis, current, previous, all_rows)
@@ -190,9 +235,10 @@ async def export_report(request: Request, analysis_id: UUID, fmt: Literal["docx"
     """The report alone (not the table): Word or Markdown, with a title and the two documents."""
     agent = get_agent(request)
     analysis = await _analysis(request, analysis_id)
-    versions = {
-        row["id"]: row for row in await agent.repo.list_catalog([analysis.current_version_id, analysis.previous_version_id])
-    }
+    if analysis.report_stale:  # a download always reflects the table as it is now
+        analysis = await agent.refresh_report(analysis_id)
+    linked = [v for v in (analysis.current_version_id, analysis.previous_version_id) if v is not None]
+    versions = {row["id"]: row for row in (await agent.repo.list_catalog(linked) if linked else [])}
     current, previous = versions.get(analysis.current_version_id), versions.get(analysis.previous_version_id)
     document = report_markdown(analysis, _version_name(current), _version_name(previous))
     if document is None:

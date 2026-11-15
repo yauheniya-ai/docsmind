@@ -72,6 +72,9 @@ class IngestionPipeline:
         await self.repo.create_version(version, full_text=parsed.full_text, stats=parsed.stats)
         await self.repo.save_parsed(parsed)
 
+        # A file that was deleted and is ingested again gets its change analyses back (matched by hash).
+        await self._relink_analyses(content_hash, version.id)
+
         # The sentence-per-line text the Change Analyzer diffs; saved so it can be inspected.
         pages = max((c.page_end or c.page_start or 0 for c in parsed.chunks), default=0) or None
         await self.repo.set_normalized_text(
@@ -79,6 +82,16 @@ class IngestionPipeline:
         )
 
         return version
+
+    async def _relink_analyses(self, content_hash: str, version_id) -> None:
+        try:
+            from docsmind.adapters.storage.postgres.change_store import PostgresChangeStore
+
+            await PostgresChangeStore(self.config).relink_versions(content_hash, version_id)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Could not re-link change analyses to %s", version_id)
 
     async def _store_original(self, path: Path, *, document: Document, version: DocumentVersion) -> str:
         def slug(text: str) -> str:

@@ -61,6 +61,12 @@ BINDING_ALIASES = {
     "n/a": "unchanged",
 }
 
+# Editing any of these changes the claim a row makes, so earlier verification no longer applies.
+CLAIM_FIELDS = ("current_clause", "previous_clause", "nature", "compliance_requirement", "binding")
+
+# Row fields that do not appear in the report: changing only these leaves the report as it is.
+NON_REPORT_FIELDS = frozenset({"confirmations", "approved"})
+
 NO_CHANGE = "No change"
 _NO_DELTA = {"", "no change", "none", "n/a", "-"}
 
@@ -123,7 +129,14 @@ class ChangeRow(BaseModel):
     proof: list[Proof] = Field(default_factory=list)
     verification_note: str | None = None  # why a row is not verified: failed, or not verifiable
     approved: bool = False  # a human's check
-    origin: Literal["scan", "changelog", "user"] = "scan"
+    origin: Literal["scan", "changelog", "user", "agent"] = "scan"
+    # active: part of the table. candidate: from a scan, waiting for verification. archived: rejected by
+    # verification or deleted by a person; kept with the reason and shown only under "Show deleted".
+    status: Literal["active", "candidate", "archived"] = "active"
+    archive_reason: str | None = None
+    archived_at: datetime | None = None
+    archived_by_run: UUID | None = None
+    confirmations: int = 0  # how often a later scan found this row again
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
 
@@ -161,14 +174,25 @@ class ChangeRow(BaseModel):
         ]
 
 
-AnalysisStatus = Literal["running", "done", "failed", "stopped", "identical", "unrelated"]
+AnalysisStatus = Literal["running", "done", "failed", "stopped", "identical", "unrelated", "superseded"]
 AnalysisMode = Literal["diff", "full", "changelog", "none"]
 
 
 class ChangeAnalysis(BaseModel):
+    """One table per ordered pair of documents. Identity is the pair of content hashes: the version
+    links are NULL while a document is deleted and are set again when the same file is ingested."""
+
     id: UUID = Field(default_factory=uuid4)
-    current_version_id: UUID
-    previous_version_id: UUID
+    current_version_id: UUID | None = None
+    previous_version_id: UUID | None = None
+    current_hash: str = ""
+    previous_hash: str = ""
+    # What is shown when the document itself is gone: {"title", "collection", "label", "page_count"}.
+    current_doc: dict[str, Any] = Field(default_factory=dict)
+    previous_doc: dict[str, Any] = Field(default_factory=dict)
+    report_stale: bool = False  # rows changed after the report was written
+    report_revision: int = 0  # table_revision the report covers
+    table_revision: int = 0  # +1 on every change to the active rows
     status: AnalysisStatus = "running"
     mode: AnalysisMode = "none"
     diff_ratio: float | None = None
@@ -189,3 +213,20 @@ class ChangeResult(BaseModel):
     message: str
     analysis: ChangeAnalysis | None = None
     rows: list[ChangeRow] = Field(default_factory=list)
+
+
+RunKind = Literal["compare", "rescan", "verify", "edit", "question"]
+
+
+class ChangeRun(BaseModel):
+    """One request made of an analysis: what was asked, what it cost, how it ended."""
+
+    id: UUID = Field(default_factory=uuid4)
+    analysis_id: UUID
+    started_at: datetime = Field(default_factory=_now)
+    request: str = ""
+    kind: RunKind = "compare"
+    scope: str = ""
+    usage: dict[str, Any] = Field(default_factory=dict)  # cost breakdown, per model and per tool
+    steps: int = 0
+    outcome: str = ""

@@ -25,6 +25,9 @@ from docsmind.domain.errors import ToolInputError
 
 log = logging.getLogger(__name__)
 
+# Old tool names still accepted from a model that remembers them.
+TOOL_ALIASES = {"fetch_url": "read_url"}
+
 Emit = Callable[[AgentEvent], None]
 # (subagent name, task, document handles, extra arguments) -> report
 DelegateFn = Callable[[str, str, "list[str] | None", "dict[str, Any]"], Awaitable[str]]
@@ -57,7 +60,12 @@ class Tool:
     description: ClassVar[str]  # written for the model
     summary: ClassVar[str] = ""  # one plain sentence for people (shown in the UI)
     how_it_works: ClassVar[tuple[str, ...]] = ()  # quick-reference steps for people (UI only, never sent to the model)
-    subagent_only: ClassVar[bool] = False  # True: never offered to the main executor, only to subagents that list it
+    # core: shared by every agent. table / advanced: the Change Analyzer's own tools (never offered to the Mind).
+    # mind: the Mind's own (delegate).
+    tier: ClassVar[str] = "core"
+    # The system prompt of the tool's OWN model call, when it makes one (shown in the UI only: the agent that
+    # calls the tool never sees it, only the description and the arguments).
+    model_prompt: ClassVar[str] = ""
     long_running: ClassVar[bool] = False  # True: no per-call timeout (the tool is a whole pipeline, e.g. delegate)
     Args: ClassVar[type[BaseModel]]
 
@@ -115,6 +123,8 @@ class ToolRegistry:
             out.append(
                 {
                     "name": n,
+                    "tier": tool.tier,
+                    "model_prompt": tool.model_prompt,
                     "description": tool.summary,
                     "how_it_works": list(tool.how_it_works),
                     "instructions": spec.description,
@@ -127,8 +137,8 @@ class ToolRegistry:
         return ToolRegistry([t for n, t in self._tools.items() if n in names])
 
     def for_executor(self) -> ToolRegistry:
-        """The tools the main executor may call: everything except subagent-only tools."""
-        return ToolRegistry([t for t in self._tools.values() if not t.subagent_only])
+        """The tools the Mind may call: the core tools and its own, not the Change Analyzer's table and step tools."""
+        return ToolRegistry([t for t in self._tools.values() if t.tier in ("core", "mind")])
 
     def configured(self, config: DocsmindConfig) -> ToolRegistry:
         """Drops tools whose configuration is missing, so the model never sees a tool it cannot use."""
@@ -138,7 +148,7 @@ class ToolRegistry:
         return [t.spec() for t in self._tools.values()]
 
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
-        tool = self._tools.get(call.name)
+        tool = self._tools.get(TOOL_ALIASES.get(call.name, call.name))
         if tool is None:
             return ToolOutput(
                 f"Unknown tool '{call.name}'. Available: {', '.join(self._tools)}.", True, "unknown tool"

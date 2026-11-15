@@ -1,4 +1,4 @@
-"""Tools of the Change Analyzer: `page_vision`, `load_table` (subagent-only) and the Mind's `export_excel`."""
+"""Core tools that read what documents cannot show: `page_vision` and `load_table`."""
 
 from __future__ import annotations
 
@@ -6,18 +6,14 @@ import asyncio
 import csv
 import io
 import re
-from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urlsplit
-from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
-from docsmind.agent.subagents.change_analysis.export import rows_to_xlsx
 from docsmind.agent.tools.base import Tool, ToolContext, ToolOutput
 from docsmind.agent.tools.web import fetch_bytes
 from docsmind.config import DocsmindConfig
-from docsmind.domain.changes import Nature
 from docsmind.domain.errors import ToolInputError
 
 MAX_VISION_PAGES = 2
@@ -41,7 +37,6 @@ class PageVisionArgs(BaseModel):
 
 class PageVisionTool(Tool):
     name = "page_vision"
-    subagent_only = True
     summary = "Looks at a page as an image and reads off what is asked, for tables, columns and layouts that text extraction garbles."
     description = (
         "Render page(s) of a PDF as images and have a vision model read them: use it when extracted text "
@@ -128,7 +123,6 @@ class LoadTableArgs(BaseModel):
 
 class LoadTableTool(Tool):
     name = "load_table"
-    subagent_only = True
     summary = "Reads a published spreadsheet or CSV (for example a changelog) and returns its rows as text, no model involved."
     description = (
         "Download a public .xlsx or .csv file and return its rows as text, the first row being the header. "
@@ -231,66 +225,3 @@ def _parse_csv(data: bytes, encoding: str) -> dict[str, list[list[str]]]:
         if len(rows) >= MAX_TABLE_ROWS:
             break
     return {"data": rows} if rows else {}
-
-
-# -- export_excel ------------------------------------------------------------------------------
-
-
-class ExportExcelArgs(BaseModel):
-    analysis_id: str | None = Field(default=None, description="Id of the change analysis. Omit for the most recent one.")
-    only: Literal["all", "actionable"] = Field(
-        default="all", description='"actionable": only rows with a normative compliance delta (new, modified, removed).'
-    )
-    natures: list[Literal["new", "modified", "editorial", "removed", "relocated"]] | None = Field(
-        default=None, description="Only rows with these natures. Omit for all."
-    )
-
-
-class ExportExcelTool(Tool):
-    name = "export_excel"
-    summary = "Writes a stored change table to an Excel file and gives the user a download link."
-    description = (
-        "Export the change table of a comparison to an Excel (.xlsx) file and return a markdown download "
-        "link to give to the user. The file has the table's 8 columns (not the verification details). "
-        "Use when the user asks for the change table as Excel; you can limit it to actionable rows or some natures."
-    )
-    how_it_works = (
-        "Loads the stored change table (the most recent comparison unless an id is given).",
-        "Optionally keeps only actionable rows or chosen natures.",
-        "Writes an .xlsx file under the blob folder and returns its download link.",
-    )
-    Args = ExportExcelArgs
-
-    async def run(self, args: ExportExcelArgs, ctx: ToolContext) -> ToolOutput:
-        if ctx.changes is None:
-            raise ToolInputError("Change tables are not available here.")
-        analysis_id = await _analysis_id(args.analysis_id, ctx)
-        rows = await ctx.changes.list_rows(analysis_id)
-        if args.only == "actionable":
-            rows = [r for r in rows if r.actionable]
-        if args.natures:
-            wanted = {Nature(n) for n in args.natures}
-            rows = [r for r in rows if r.nature in wanted]
-        if not rows:
-            return ToolOutput("The table has no rows matching that filter, so nothing was exported.", summary="no rows")
-        data = await asyncio.to_thread(rows_to_xlsx, rows)
-        name = f"change-table-{str(analysis_id)[:8]}-{uuid4().hex[:6]}.xlsx"
-        folder = Path(ctx.config.blob_root) / "exports"
-        folder.mkdir(parents=True, exist_ok=True)
-        await asyncio.to_thread((folder / name).write_bytes, data)
-        return ToolOutput(
-            f"Exported {len(rows)} rows: [Change table ({name})](/blobs/exports/{name})",
-            summary=f"{len(rows)} rows",
-        )
-
-
-async def _analysis_id(value: str | None, ctx: ToolContext) -> UUID:
-    if value:
-        try:
-            return UUID(value.strip())
-        except ValueError as exc:
-            raise ToolInputError("analysis_id is not a valid id.") from exc
-    latest = await ctx.changes.list_analyses(limit=1)
-    if not latest:
-        raise ToolInputError("There is no change analysis yet. Compare two versions first.")
-    return latest[0]["id"]

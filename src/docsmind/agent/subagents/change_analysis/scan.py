@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 
 from docsmind.agent import prompts
 from docsmind.agent.subagents.change_analysis.env import RunEnv
@@ -46,29 +46,44 @@ async def scan(
     notes: str,
     on_row: OnRow,
     on_status: OnStatus,
+    resume_rows: Sequence[ChangeRow] = (),
+    skip_parts: frozenset[int] = frozenset(),
+    on_part_done: Callable[[int], Awaitable[None]] | None = None,
 ) -> dict:
-    """Scan every part in order. -> stats {parts, skipped, retries, rows}."""
+    """Scan every part in order. -> stats {parts, skipped, retries, rows}.
+
+    A scan that stopped midway is continued: `skip_parts` are the parts that finished, and `resume_rows`
+    are the rows found so far, given to the model as "continue after the last row"."""
     system = prompts.SCANNER + (prompts.SCANNER_CHANGELOG if changelog_mode else "")
     stats = {"parts": len(parts), "skipped": 0, "retries": 0, "rows": 0}
     for part in parts:
+        if part.index in skip_parts:
+            continue
         if not changelog_mode and not part_has_changes(prep, part):
             stats["skipped"] += 1  # nothing differs here: no model call
+            if on_part_done:
+                await on_part_done(part.index)
             continue
         if len(parts) > 1:
             on_status(f"Scanning part {part.index + 1} of {len(parts)}")
         user = part_inputs(prep, part, len(parts))
         if notes:
             user += f"\n\n<focus>\n{notes}\n</focus>"
-        rows, retries = await scan_part(env, system, user, on_row=on_row)
+        rows, retries = await scan_part(env, system, user, on_row=on_row, seed=resume_rows)
         stats["rows"] += rows
         stats["retries"] += retries
+        if on_part_done:
+            await on_part_done(part.index)
     return stats
 
 
-async def scan_part(env: RunEnv, system: str, user: str, *, on_row: OnRow) -> tuple[int, int]:
-    """One part, relaunched until the model finishes. -> (rows stored, relaunches)."""
-    seen: set[str] = set()
-    produced: list[ChangeRow] = []
+async def scan_part(
+    env: RunEnv, system: str, user: str, *, on_row: OnRow, seed: Sequence[ChangeRow] = ()
+) -> tuple[int, int]:
+    """One part, relaunched until the model finishes. `seed`: rows found before (an interrupted scan), which
+    the model continues after and which are never stored twice. -> (rows stored, relaunches)."""
+    seen: set[str] = {row_key(r) for r in seed}
+    produced: list[ChangeRow] = list(seed)
     attempts = 0
 
     while True:
@@ -108,6 +123,7 @@ async def scan_part(env: RunEnv, system: str, user: str, *, on_row: OnRow) -> tu
                 message,
                 max_tokens=env.config.change_scan_max_output_tokens,
                 on_text=on_text,
+                tool="scan_documents",
             )
             if buffer.strip():
                 await handle(buffer)  # the last line has no newline
@@ -115,7 +131,7 @@ async def scan_part(env: RunEnv, system: str, user: str, *, on_row: OnRow) -> tu
                 raise ScanBroken("the output was cut off")
             if not finished:
                 raise ScanBroken("no done marker")
-            return len(produced), attempts
+            return len(produced) - len(seed), attempts
         except asyncio.CancelledError:
             raise
         except LLMConfigurationError:

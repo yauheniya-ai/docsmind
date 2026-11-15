@@ -5,6 +5,12 @@ from __future__ import annotations
 import pytest
 from fakes import FakeRepo, ScriptedLLM
 
+from docsmind.adapters.storage.memory import (
+    InMemoryChangeStore,
+    InMemoryConversationStore,
+    InMemoryMemoryStore,
+)
+from docsmind.agent.agent import DocsmindAgent
 from docsmind.config import DocsmindConfig
 
 
@@ -23,3 +29,25 @@ def repo() -> FakeRepo:
 @pytest.fixture
 def llm() -> ScriptedLLM:
     return ScriptedLLM()
+
+
+@pytest.fixture
+def changes() -> InMemoryChangeStore:
+    return InMemoryChangeStore()
+
+
+@pytest.fixture
+def agent(config, llm, changes):
+    def build(repo):
+        return DocsmindAgent(
+            config,
+            llm=llm,
+            fast_llm=llm,
+            scan_llm=llm,
+            repository=repo,
+            conversations=InMemoryConversationStore(),
+            memory=InMemoryMemoryStore(),
+            changes=changes,
+        )
+
+    return build

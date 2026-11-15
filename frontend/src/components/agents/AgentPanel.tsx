@@ -262,12 +262,18 @@ function AgentDetails({
   const stages: AgentStageInfo[] = "stages" in agent && agent.stages ? agent.stages : []
   const isMind = nodeId === "mind"
   const isStage = nodeId.startsWith("stage:")
-  const steps = isMind ? info.limits.max_steps : isStage ? null : info.limits.verify_max_steps
+  const limits = info.limits
+  const steps = isMind ? limits.max_steps : isStage ? null : (limits.change_agent_max_steps ?? limits.verify_max_steps)
   const budget =
     "budget" in agent && agent.budget
       ? agent.budget
       : steps
-        ? `Up to ${steps} steps${isMind ? "" : " per row check"}`
+        ? isMind
+          ? `Up to ${steps} steps`
+          : `Up to ${steps} steps per request` +
+            (limits.change_request_max_model_calls
+              ? `, ${limits.change_request_max_model_calls} model calls in total (loops inside tools included)`
+              : "")
         : "One model call, no tools"
 
   return (
@@ -275,14 +281,16 @@ function AgentDetails({
       <p className="text-sm leading-relaxed text-muted-foreground">{agent.description}</p>
 
       <dl className="flex flex-wrap gap-x-8 gap-y-3">
-        <div>
-          <dt className="mb-1.5 text-xs font-bold uppercase tracking-widest text-muted-foreground">Model</dt>
-          <dd>
-            <Badge variant="secondary" className="bg-secondary/50 font-mono text-xs">
-              {agent.model}
-            </Badge>
-          </dd>
-        </div>
+        {agent.model && (
+          <div>
+            <dt className="mb-1.5 text-xs font-bold uppercase tracking-widest text-muted-foreground">Model</dt>
+            <dd>
+              <Badge variant="secondary" className="bg-secondary/50 font-mono text-xs">
+                {agent.model}
+              </Badge>
+            </dd>
+          </div>
+        )}
         <div>
           <dt className="mb-1.5 text-xs font-bold uppercase tracking-widest text-muted-foreground">Budget</dt>
           <dd className="text-sm text-foreground">{budget}</dd>
@@ -464,11 +472,21 @@ function ToolDetails({
 
       <Section
         icon={ScrollText}
-        title="Description the model reads"
-        hint="Sent with every call so the model knows when to use the tool."
+        title="Description the agent reads"
+        hint="All the calling agent sees of this tool, with its arguments: it decides from this when to use it."
       >
         <PromptCard text={tool.instructions} />
       </Section>
+
+      {tool.model_prompt && (
+        <Section
+          icon={ScrollText}
+          title="Prompt of the tool's own model call"
+          hint="Used inside the tool, by a separate model call. The agent that calls the tool never sees it."
+        >
+          <PromptCard text={tool.model_prompt} />
+        </Section>
+      )}
 
       <Section icon={SlidersHorizontal} title="Arguments" hint="What the model must supply, validated before the tool runs.">
         <ArgumentList schema={tool.parameters} />
@@ -499,11 +517,14 @@ export function AgentPanel({
   info,
   onSelect,
   onClose,
+  extra,
 }: {
   node: GraphNode
   info: AgentInfo
   onSelect: (id: string) => void
   onClose: () => void
+  /** Explanation placed above the details (how the agent works). */
+  extra?: ReactNode
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -532,7 +553,7 @@ export function AgentPanel({
               <code className="rounded bg-secondary/70 px-1.5 py-0.5 font-mono text-[11px]">{node.code}</code>
             )}
           </div>
-          <div className="text-xs text-muted-foreground">{isTool ? "Tool" : node.role ?? humanize(node.kind)}</div>
+          <div className="text-xs text-muted-foreground">{isTool ? "Tool" : (node.role ?? humanize(node.kind))}</div>
         </div>
         <Button variant="ghost" size="icon" className="-mr-1 h-7 w-7 shrink-0" onClick={onClose} aria-label="Close details">
           <X className="h-4 w-4" />
@@ -541,9 +562,21 @@ export function AgentPanel({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 pb-safe md:px-6">
         {node.detail.type === "agent" ? (
-          <AgentDetails agent={node.detail.agent} info={info} nodeId={node.id} onSelect={onSelect} />
-        ) : (
+          <div className="space-y-7">
+            {extra}
+            <AgentDetails agent={node.detail.agent} info={info} nodeId={node.id} onSelect={onSelect} />
+          </div>
+        ) : node.detail.type === "tool" ? (
           <ToolDetails tool={node.detail.tool} info={info} onSelect={onSelect} />
+        ) : (
+          <div className="space-y-4">
+            {node.detail.model && (
+              <Badge variant="secondary" className="bg-secondary/50 font-mono text-xs">
+                {node.detail.model}
+              </Badge>
+            )}
+            <p className="text-sm leading-relaxed text-muted-foreground">{node.detail.description}</p>
+          </div>
         )}
       </div>
     </aside>

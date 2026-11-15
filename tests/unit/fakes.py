@@ -17,6 +17,7 @@ class ScriptedLLM:
         "You are the router": "router",
         "You are the planner": "planner",
         "You are the Mind": "executor",
+        "You are the Change Analyzer": "agent",
         "You are the version checker": "decider",
         "You are the scanner": "scanner",
         "You are the changelog finder": "finder",
@@ -90,11 +91,11 @@ class FakeRepo:
         self.rows = [
             {
                 "id": self.v1, "document_id": uuid4(), "title": "Retention Policy",
-                "collection": "policies", "label": "2024", "page_count": 3, "word_count": 900,
+                "collection": "policies", "label": "2024", "page_count": 3, "word_count": 900, "content_hash": "hash-v1",
             },
             {
                 "id": self.v2, "document_id": uuid4(), "title": "Security Policy",
-                "collection": "policies", "label": "2025", "page_count": 2, "word_count": 500,
+                "collection": "policies", "label": "2025", "page_count": 2, "word_count": 500, "content_hash": "hash-v2",
             },
         ]
         self.pages: dict[tuple[UUID, int], dict] = {}

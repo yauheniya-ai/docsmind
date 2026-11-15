@@ -135,6 +135,10 @@ export interface JsonSchema {
 
 export interface AgentToolInfo {
   name: string
+  /** The system prompt of the tool's own model call, if it makes one. The calling agent never sees it. */
+  model_prompt?: string
+  /** core: shared by every agent; table / advanced: the Change Analyzer's own; mind: the Mind's own. */
+  tier?: "core" | "table" | "advanced" | "mind"
   /** Plain-language summary for people. */
   description: string
   /** Quick-reference steps for people; never sent to the model. */
@@ -190,9 +194,16 @@ export interface AgentInfo {
     summarizer_model: string
     memory_model: string
     memory_enabled: boolean
+    /** Plain-language description of each part of the harness. */
+    components?: { name: string; title: string; description: string; model: string | null; enabled: boolean }[]
   }
   subagents: AgentCardInfo[]
-  limits: { max_steps: number; verify_max_steps: number }
+  limits: {
+    max_steps: number
+    verify_max_steps: number
+    change_agent_max_steps?: number
+    change_request_max_model_calls?: number
+  }
 }
 
 // --- change analysis (comparing two versions) ------------------------------------------
@@ -223,7 +234,13 @@ export interface ChangeRow {
   proof: ChangeProof[]
   verification_note: string | null
   approved: boolean
-  origin: "scan" | "changelog" | "user"
+  origin: "scan" | "changelog" | "user" | "agent"
+  /** active: part of the table. candidate: found by a scan, waiting for verification. archived: rejected or deleted. */
+  status: "active" | "candidate" | "archived"
+  archive_reason: string | null
+  archived_at: string | null
+  /** How often a later scan found this row again. */
+  confirmations: number
 }
 
 export type ChangeRowInput = Partial<
@@ -248,8 +265,9 @@ export interface ChangelogInfo {
 
 export interface ChangeAnalysisInfo {
   id: string
-  current_version_id: string
-  previous_version_id: string
+  /** null while the document is deleted: the analysis stays and is re-linked when the same file is ingested. */
+  current_version_id: string | null
+  previous_version_id: string | null
   status: "running" | "done" | "failed" | "stopped" | "identical" | "unrelated"
   mode: "diff" | "full" | "changelog" | "none"
   diff_ratio: number | null
@@ -257,14 +275,30 @@ export interface ChangeAnalysisInfo {
   verdict_note: string
   changelog: ChangelogInfo
   report: string | null
+  /** Rows changed after the report was written. */
+  report_stale: boolean
   meta: Record<string, unknown>
   created_at: string
 }
 
 export interface ChangeVersionInfo {
-  version_id: string
+  version_id: string | null
   title: string
   label: string
+  /** The document was deleted; title and label come from what the analysis saved. */
+  deleted?: boolean
+}
+
+export interface ChangeRun {
+  id: string
+  analysis_id: string
+  started_at: string
+  request: string
+  kind: "compare" | "rescan" | "verify" | "edit" | "question"
+  scope: string
+  steps: number
+  outcome: string
+  usage: { cost?: { usd?: number; usd_without_cache?: number; cache_hit_rate?: number }; model_calls?: number; seconds?: number }
 }
 
 export interface ChangeDetail {
@@ -272,6 +306,10 @@ export interface ChangeDetail {
   current: ChangeVersionInfo | null
   previous: ChangeVersionInfo | null
   rows: ChangeRow[]
+  /** Rows in the archive (rejected by verification or deleted). */
+  archived_count: number
+  /** Candidates from a scan that wait for verification. */
+  pending_count: number
   /** Title, the two documents, what was compared and the report: what the Word / Markdown download contains. */
   report_markdown: string | null
 }
@@ -467,8 +505,19 @@ export const api = {
       body: JSON.stringify(patch),
     }),
 
+  /** "Deleting" a row archives it. */
   deleteChangeRow: (id: string, rowId: string) =>
     request<{ deleted: boolean; id: string }>(`/api/changes/${id}/rows/${rowId}`, { method: "DELETE" }),
+
+  getChangeArchive: (id: string) => request<{ rows: ChangeRow[] }>(`/api/changes/${id}/archive`),
+
+  restoreChangeRow: (id: string, rowId: string) =>
+    request<ChangeRow>(`/api/changes/${id}/rows/${rowId}/restore`, { method: "POST" }),
+
+  /** Rewrites the report from the table as it is now (after edits in the panel); resolves with the whole detail. */
+  refreshChangeReport: (id: string) => request<ChangeDetail>(`/api/changes/${id}/report/refresh`, { method: "POST" }),
+
+  getChangeRuns: (id: string) => request<{ runs: ChangeRun[] }>(`/api/changes/${id}/runs`),
 
   /** Runs the Change Analyzer's verification on any rows of the table; resolves with the rows afterwards. */
   verifyChangeRows: (id: string, rowIds: string[]) =>

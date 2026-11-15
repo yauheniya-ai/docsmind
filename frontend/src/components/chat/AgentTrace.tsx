@@ -77,6 +77,7 @@ function describeTool(tool: ToolItem, catalog: CatalogEntry[]): { icon: LucideIc
     case "web_search":
       return { icon: Globe, label: `${running ? "Searching the web for" : "Searched the web for"} “${str(a.query)}”` }
     case "fetch_url":
+    case "read_url":
       return { icon: Link2, label: `${running ? "Reading" : "Read"} ${hostOf(str(a.url))}` }
     case "page_vision": {
       const nums = Array.isArray(a.pages) ? (a.pages as unknown[]).join(", ") : ""
@@ -88,7 +89,8 @@ function describeTool(tool: ToolItem, catalog: CatalogEntry[]): { icon: LucideIc
     case "load_table":
       return { icon: Table2, label: `${running ? "Reading" : "Read"} the table at ${hostOf(str(a.url))}` }
     case "export_excel":
-      return { icon: FileSpreadsheet, label: running ? "Writing the Excel file" : "Wrote the Excel file" }
+    case "create_file":
+      return { icon: FileSpreadsheet, label: running ? "Writing the file" : "Wrote the file" }
     default:
       return { icon: Search, label: tool.name }
   }

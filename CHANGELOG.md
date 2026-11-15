@@ -6,6 +6,26 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- The Change Analyzer is now an agent on a persistent table instead of a fixed pipeline. It decides its own
+  steps with one toolbox: core tools shared with the Mind, table tools (`get_table`, `get_row`, `add_row`,
+  `update_row`, `archive_row`, `restore_row`) and the former stages as tools (`check_versions`,
+  `scan_documents`, `find_changelog`, `verify_findings`, `write_report`). Follow-up requests ("verify R14",
+  "review chapter 3", "check the changelog") work on the existing table instead of starting over.
+- One analysis per pair of documents, identified by the files' content hashes. A repeated request reuses the
+  table. The scan is an internal first pass that builds the foundation of the table, run once per pair and refused
+  afterwards, so the user always gets the same table, which is verified and improved over time. A scan that
+  failed or crashed midway is continued from the rows saved so far instead of starting over. A candidate enters the
+  table only through verification, and a scan never removes an active row.
+- Rejected and deleted rows are archived with the reason, not destroyed: "deleted" tab with Restore, run
+  history tab, rows pending verification. The report always reflects the table: it is rewritten automatically when the table changes (at the end of every request, when the Report tab is opened after edits, before a download). Analyses outlive their documents: deleting
+  a document keeps its analysis, and ingesting the same file again re-links it (migrations 0007, 0008).
+- `read_url` reads HTML, plain text, PDF and Word (.docx) files, with a vision fallback for scanned PDF pages
+  (`fetch_url` still works as a name). `create_file` writes txt, md, csv and xlsx results for the user and
+  replaces `export_excel`. Web search, `read_url`, `page_vision` and `load_table` are core tools of every agent.
+- The Mind has a "delegate" route that skips the planner. The register lists the stored change analyses.
+- Cost tracking knows uncached, cached-read and cache-write input and output tokens: per model, per tool and
+  per run, with the cache hit rate and what the run would have cost without caching (`DOCSMIND_MODEL_PRICES`).
+- Limits per request: `DOCSMIND_CHANGE_AGENT_MAX_STEPS=25` and `DOCSMIND_CHANGE_REQUEST_MAX_MODEL_CALLS=300`.
 - The Text tab can show the normalized text (one sentence per line, headers, footers and page
   numbers removed) that the change analysis diffs. It is saved at ingest in
   `document_versions.normalized_text` (migration 0006; run `docsmind db upgrade`) and served by
@@ -14,11 +34,19 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- The router only routes (simple, complex or delegate). It no longer rewrites the user's message into a
+  standalone question, and the `<interpreted_question>` block is gone from the Mind's and the planner's prompts.
+- The Agents page was reorganised: the Mind's steps (router, planner, executor, answer) inside its card, all tools in
+  their own section by tier with the selected agent's tools highlighted, and an explanation for every part of the
+  harness.
+- The Agents page shows the Change Analyzer's tools grouped by tier instead of a stage pipeline.
 - The embeddings and image-caption warnings now appear in the Chunks and Images tabs instead of
   above all tabs.
 - The local Docker Postgres listens on port 5434 (was 5433) to avoid clashing with other
   containers. `.env.example` no longer points at 5432.
 - New icon on the "Table & report" button.
+- `delegate` takes the user's request (`task`, required) and either the two documents or an `analysis_id`;
+  `row_ids` is gone (rows are addressed as R1, R2, ... inside the agent).
 
 ### Fixed
 

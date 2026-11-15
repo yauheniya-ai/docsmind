@@ -54,7 +54,7 @@ export function ChangeCard({
       <GitCompareArrows className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
       <div className="min-w-0 flex-1 space-y-1">
         <div className="text-sm font-medium text-foreground">
-          {analysis.reverify ? "Re-checking rows" : "Change analysis"}
+          {analysis.reverify ? (running ? "Working on the table" : "Existing change analysis") : "Change analysis"}
           {current && previous ? `: ${label(current)} vs ${label(previous)}` : ""}
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">

@@ -1,10 +1,9 @@
-"""Orchestrator: one cheap LLM call that decides the route for a turn
-(`simple` -> straight to the executor, `complex` -> planner first) and
-rewrites the question so follow-ups stand alone.
+"""Router: one call to the small model that decides how a turn is handled: `simple` -> straight to the
+executor, `complex` -> planner first, `delegate` -> straight to the executor, which hands the request to
+the Change Analyzer (no plan needed). It only routes: the user's message is never rewritten.
 
-Deterministic fallback: any failure or unparseable reply routes `simple`,
-because the executor can handle a hard question with its tools, whereas a
-broken router must never block an answer.
+Deterministic fallback: any failure or unparseable reply routes `simple`, because the executor can handle
+a hard question with its tools, whereas a broken router must never block an answer.
 """
 
 from __future__ import annotations
@@ -30,12 +29,10 @@ class Orchestrator:
             response = await self.llm.complete(bundle.messages, system=bundle.system, max_tokens=300)
         except Exception:
             log.exception("Router call failed; defaulting to the simple route")
-            return RouteDecision(route="simple", question=state.question)
+            return RouteDecision(route="simple")
         usage.add(response.usage)
 
         data = parse_json_object(response.text) or {}
-        route = "complex" if str(data.get("route", "")).lower() == "complex" else "simple"
-        question = data.get("question")
-        if not isinstance(question, str) or not question.strip():
-            question = state.question
-        return RouteDecision(route=route, question=question.strip())
+        word = str(data.get("route", "")).lower()
+        route = word if word in ("complex", "delegate") else "simple"
+        return RouteDecision(route=route)

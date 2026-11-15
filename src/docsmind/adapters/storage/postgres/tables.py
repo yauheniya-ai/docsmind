@@ -206,8 +206,17 @@ change_analyses = Table(
     "change_analyses",
     metadata,
     Column("id", UUID(as_uuid=True), primary_key=True),
-    Column("current_version_id", UUID(as_uuid=True), ForeignKey("document_versions.id", ondelete="CASCADE"), nullable=False),
-    Column("previous_version_id", UUID(as_uuid=True), ForeignKey("document_versions.id", ondelete="CASCADE"), nullable=False),
+    # Migration 0007: identity is the pair of content hashes; the version links are conveniences that
+    # become NULL when a document is deleted (the analysis stays) and are re-set on re-ingest.
+    Column("current_version_id", UUID(as_uuid=True), ForeignKey("document_versions.id", ondelete="SET NULL"), nullable=True),
+    Column("previous_version_id", UUID(as_uuid=True), ForeignKey("document_versions.id", ondelete="SET NULL"), nullable=True),
+    Column("current_hash", Text, nullable=False),
+    Column("previous_hash", Text, nullable=False),
+    Column("current_doc", JSONB, nullable=False),
+    Column("previous_doc", JSONB, nullable=False),
+    Column("report_stale", Boolean, nullable=False),
+    Column("report_revision", Integer, nullable=False),
+    Column("table_revision", Integer, nullable=False),
     Column("status", Text, nullable=False),
     Column("mode", Text, nullable=False),
     Column("diff_ratio", Float, nullable=True),
@@ -239,6 +248,27 @@ change_rows = Table(
     Column("verification_note", Text, nullable=True),
     Column("approved", Boolean, nullable=False),
     Column("origin", Text, nullable=False),
+    # Migration 0007: active rows are the table; candidates wait for verification; archived rows were
+    # rejected or deleted (kept, with the reason).
+    Column("status", Text, nullable=False),
+    Column("archive_reason", Text, nullable=True),
+    Column("archived_at", DateTime(timezone=True), nullable=True),
+    Column("archived_by_run", UUID(as_uuid=True), nullable=True),
+    Column("confirmations", Integer, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+change_runs = Table(
+    "change_runs",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("analysis_id", UUID(as_uuid=True), ForeignKey("change_analyses.id", ondelete="CASCADE"), nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("request", Text, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("scope", Text, nullable=False),
+    Column("usage", JSONB, nullable=False),
+    Column("steps", Integer, nullable=False),
+    Column("outcome", Text, nullable=False),
 )

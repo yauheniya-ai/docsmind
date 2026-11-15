@@ -1,4 +1,5 @@
 import {
+  Archive,
   BookOpen,
   Bot,
   BrainCircuit,
@@ -12,7 +13,11 @@ import {
   Library,
   Globe,
   Link2,
+  Pencil,
+  Plus,
+  RotateCcw,
   Route as RouteIcon,
+  Layers,
   ScanSearch,
   ScrollText,
   Search,
@@ -44,6 +49,9 @@ export const ICONS: Record<string, LucideIcon> = {
   change_analyzer: GitCompareArrows,
   router: RouteIcon,
   planner: ListChecks,
+  core: Wrench,
+  table: Table2,
+  advanced: Layers,
   versions_check: GitCompare,
   scan: ScanSearch,
   changelog: ScrollText,
@@ -56,9 +64,21 @@ export const ICONS: Record<string, LucideIcon> = {
   list_documents: Library,
   delegate: Workflow,
   web_search: Globe,
-  fetch_url: Link2,
+  read_url: Link2,
   page_vision: Eye,
   load_table: Table2,
+  create_file: FileSpreadsheet,
+  check_versions: GitCompare,
+  scan_documents: ScanSearch,
+  find_changelog: ScrollText,
+  verify_findings: ShieldCheck,
+  write_report: FileText,
+  get_table: Table2,
+  get_row: FileText,
+  add_row: Plus,
+  update_row: Pencil,
+  archive_row: Archive,
+  restore_row: RotateCcw,
   export_excel: FileSpreadsheet,
 }
 
@@ -76,6 +96,7 @@ export type Kind = "mind" | "subagent" | "stage" | "tool"
 export type NodeDetail =
   | { type: "agent"; agent: AgentCardInfo | AgentStageInfo }
   | { type: "tool"; tool: AgentToolInfo }
+  | { type: "text"; description: string; model?: string | null }
 
 export interface GraphNode {
   id: string
@@ -108,6 +129,52 @@ const polar = (cx: number, cy: number, r: number, deg: number) => ({
 /** Spread `count` points around a circle, starting `offset` degrees from `start`. */
 function ring(count: number, start: number, offset: number): number[] {
   return Array.from({ length: count }, (_, i) => start + offset + (i * 360) / count)
+}
+
+const TIER_TEXT: Record<string, { role: string; label: string; text: string }> = {
+  core: {
+    role: "Core tools",
+    label: "Core tools",
+    text: "Simple, deterministic building blocks shared with the Mind: search, grep, read pages, outline, tables, web, reading URLs (HTML, PDF, Word), page vision and file creation.",
+  },
+  table: {
+    role: "Table tools",
+    label: "Table tools",
+    text: "Read and edit the change table: list and open rows, add, update, archive and restore. A deleted row is archived with its reason, never destroyed.",
+  },
+  advanced: {
+    role: "Advanced tools (steps)",
+    label: "Steps",
+    text: "The former pipeline stages as tools the agent calls in any order: check versions, scan, find the changelog, verify findings, write the report. Each can use its own model. A candidate enters the table only through verification (enforced in code).",
+  },
+}
+const TIER_ORDER = ["core", "table", "advanced"]
+
+/** An agent without stages whose tools carry tiers: one group per tier, as a stage-like hub. */
+function tierGroups(sub: AgentCardInfo): AgentStageInfo[] {
+  const groups: AgentStageInfo[] = []
+  for (const tier of TIER_ORDER) {
+    const tools = sub.tools.filter((t) => t.tier === tier)
+    if (tools.length === 0) continue
+    const text = TIER_TEXT[tier]
+    groups.push({
+      name: tier,
+      role: text.role,
+      description: text.text,
+      model: "",
+      system_prompt: "",
+      context: [],
+      user_prompt: "",
+      budget:
+        tier === "advanced"
+          ? "Each step may use its own model; verification runs one tool loop per row"
+          : tier === "table"
+            ? "No model call: reads and writes the stored table"
+            : "Deterministic tools, no model of their own",
+      tools,
+    })
+  }
+  return groups.length > 1 ? groups : []
 }
 
 export function buildGraph(info: AgentInfo): { nodes: GraphNode[]; edges: GraphEdge[] } {
@@ -170,7 +237,8 @@ export function buildGraph(info: AgentInfo): { nodes: GraphNode[]; edges: GraphE
     })
     edges.push({ from: "mind", to: id, kind: "agent" })
 
-    const stages = sub.stages ?? []
+    const stages = (sub.stages ?? []).length > 0 ? (sub.stages ?? []) : tierGroups(sub)
+    const tiered = (sub.stages ?? []).length === 0 && stages.length > 0
     if (stages.length === 0) {
       // A subagent without a pipeline owns its tools: spread them around it, away from the Mind.
       const towardMind = (Math.atan2(CENTER.y - pos.y, CENTER.x - pos.x) * 180) / Math.PI
@@ -202,6 +270,7 @@ export function buildGraph(info: AgentInfo): { nodes: GraphNode[]; edges: GraphE
     let previous = id
     stages.forEach((stage: AgentStageInfo, k) => {
       const stageId = `stage:${sub.name}.${stage.name}`
+      const parent = tiered ? id : previous
       const x = ((used + weights[k] / 2) / total) * W
       used += weights[k]
       nodes.push({
@@ -210,15 +279,15 @@ export function buildGraph(info: AgentInfo): { nodes: GraphNode[]; edges: GraphE
         x,
         y: PIPELINE_Y,
         icon: ICONS[stage.name] ?? Bot,
-        label: stage.role,
+        label: tiered ? (TIER_TEXT[stage.name]?.label ?? stage.role) : stage.role,
         title: stage.role,
-        role: `Stage of the ${humanize(sub.name)}`,
+        role: tiered ? `${stage.role} of the ${humanize(sub.name)}` : `Stage of the ${humanize(sub.name)}`,
         text: stage.description,
         model: stage.model,
         detail: { type: "agent", agent: stage },
       })
-      edges.push({ from: previous, to: stageId, kind: "stage" })
-      previous = stageId
+      edges.push({ from: parent, to: stageId, kind: "stage" })
+      if (!tiered) previous = stageId
 
       const tools = stage.tools ?? []
       const radius = 95 + 10 * tools.length
@@ -270,7 +339,7 @@ export function toolUsers(info: AgentInfo, toolName: string): { id: string; labe
     users.push({ id: "mind", label: humanize(info.agent.name) })
   }
   for (const sub of info.subagents) {
-    const stages = sub.stages ?? []
+    const stages = (sub.stages ?? []).length > 0 ? (sub.stages ?? []) : tierGroups(sub)
     if (stages.length === 0) {
       if (sub.tools.some((t) => t.name === toolName)) users.push({ id: `sub:${sub.name}`, label: humanize(sub.name) })
       continue

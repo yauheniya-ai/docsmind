@@ -59,14 +59,26 @@ class SystemBlock(BaseModel):
 
 
 class Usage(BaseModel):
+    """Tokens of one or more model calls, normalized across providers.
+
+    `input_tokens` is the TOTAL input and already includes the cached tokens read and the cache
+    write tokens, so `uncached_input_tokens = input - cached_read - cache_write`. `output_tokens`
+    includes reasoning tokens where the provider bills them as output."""
+
     input_tokens: int = 0
     output_tokens: int = 0
-    cached_input_tokens: int = 0
+    cached_input_tokens: int = 0  # cache hits (read)
+    cache_write_tokens: int = 0  # tokens written to the cache, for providers that charge for it
+
+    @property
+    def uncached_input_tokens(self) -> int:
+        return max(0, self.input_tokens - self.cached_input_tokens - self.cache_write_tokens)
 
     def add(self, other: Usage) -> None:
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
         self.cached_input_tokens += other.cached_input_tokens
+        self.cache_write_tokens += other.cache_write_tokens
 
 
 class LLMResponse(BaseModel):
@@ -91,8 +103,7 @@ class Plan(BaseModel):
 
 
 class RouteDecision(BaseModel):
-    route: Literal["simple", "complex"] = "simple"
-    question: str = ""  # the user's question rewritten to stand on its own
+    route: Literal["simple", "complex", "delegate"] = "simple"
 
 
 class AgentResult(BaseModel):

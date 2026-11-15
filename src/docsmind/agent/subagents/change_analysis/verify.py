@@ -30,7 +30,7 @@ from docsmind.agent.subagents.change_analysis.rows import (
     row_for_model,
     row_from_object,
 )
-from docsmind.agent.subagents.specs import VERIFY_TOOLS
+from docsmind.agent.subagents.specs import VERIFY_TOOLS, WEB_TOOLS
 from docsmind.domain.changes import ChangeRow, Nature, Proof
 from docsmind.domain.errors import LLMConfigurationError
 
@@ -120,6 +120,7 @@ async def verify_row(
     b: DocText,
     changelog_mode: bool,
     notes: str = "",
+    public: bool = False,
 ) -> Verdict:
     """Verify one scan row, or (with `entry`, no `row`) check a changelog claim that has no row.
 
@@ -132,7 +133,7 @@ async def verify_row(
         if attempt:
             env.verify_retries += 1
         verdict = await _verify_once(
-            env, row=row, entry=entry, a=a, b=b, changelog_mode=changelog_mode, notes=notes, retrying=attempt > 0
+            env, row=row, entry=entry, a=a, b=b, changelog_mode=changelog_mode, notes=notes, retrying=attempt > 0, public=public
         )
         if not verdict.retry:
             return verdict
@@ -152,6 +153,7 @@ async def _verify_once(
     changelog_mode: bool,
     notes: str,
     retrying: bool,
+    public: bool = False,
 ) -> Verdict:
     system = prompts.VERIFIER
     if changelog_mode:
@@ -165,9 +167,10 @@ async def _verify_once(
             system=system,
             task=_task(row, entry, a.doc, b.doc, changelog_mode=changelog_mode, notes=notes, retrying=retrying),
             catalog=catalog,
-            tool_names=VERIFY_TOOLS,
+            tool_names=VERIFY_TOOLS + (WEB_TOOLS if public else ()),
             max_steps=env.config.change_verify_max_steps,
             max_tokens=2_048,
+            tool="verify_findings",
         )
     except LLMConfigurationError:
         raise  # a missing key or model name: relaunching cannot help

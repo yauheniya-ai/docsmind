@@ -104,7 +104,7 @@ def _fallback_narrative(rows: list[ChangeRow]) -> str:
 async def write_narrative(env: RunEnv, rows: list[ChangeRow], changelog: dict) -> str:
     facts = json.dumps(_facts(rows, changelog), ensure_ascii=False)
     try:
-        response = await env.call(env.llm, prompts.REPORT_WRITER, facts, max_tokens=4_096)
+        response = await env.call(env.llm, prompts.REPORT_WRITER, facts, max_tokens=4_096, tool="write_report")
     except Exception as exc:  # noqa: BLE001 - the report must still be written without the narrative
         log.warning("The report writer failed: %s: %s", type(exc).__name__, exc)
         return _fallback_narrative(rows)
@@ -195,16 +195,29 @@ def _cost_lines(stats: dict) -> list[str]:
     models = cost.get("models") or []
     if not models:
         return []
-    head = usd(cost.get("usd", 0.0)) if cost.get("complete") else f"at least {usd(cost.get('usd', 0.0))}"
-    lines = [f"- Cost: {head} at list prices, cached input not discounted."]
+    total = usd(cost.get("usd", 0.0))
+    if not cost.get("complete"):
+        head = f"at least {total}"
+    elif cost.get("upper_bound"):
+        head = f"at most {total}"
+    else:
+        head = total
+    plain = cost.get("usd_without_cache")
+    without = f"; without caching it would have been {usd(plain)}" if plain and plain > cost.get("usd", 0.0) else ""
+    lines = [f"- Cost: {head} at list prices{without}. Cache hit rate {cost.get('cache_hit_rate', 0.0):.0%}."]
     for m in models:
-        used = f"{m['input_tokens']:,} input and {m['output_tokens']:,} output tokens"
         if m["usd"] is None:
-            lines.append(f"  - {m['model']}: {used}, not priced (no price in the table)")
-        else:
-            lines.append(
-                f"  - {m['model']}: {used} at ${m['input_price']:g} / ${m['output_price']:g} per 1M tokens = {usd(m['usd'])}"
-            )
+            lines.append(f"  - {m['model']}: {m['input_tokens']:,} input and {m['output_tokens']:,} output tokens, not priced (no price in the table)")
+            continue
+        used = (
+            f"{m.get('uncached_input_tokens', m['input_tokens']):,} uncached + {m.get('cached_read_tokens', 0):,} cached read + "
+            f"{m.get('cache_write_tokens', 0):,} cache write + {m['output_tokens']:,} output"
+        )
+        note = " (no cached price configured: priced as normal input)" if m.get("upper_bound") else ""
+        lines.append(f"  - {m['model']}: {used} = {usd(m['usd'])}{note}")
+    tools = [t for t in cost.get("tools") or [] if t["usd"] > 0]
+    if tools:
+        lines.append("  - By tool: " + ", ".join(f"{t['tool']} {usd(t['usd'])}" for t in tools))
     if stats.get("vision_reads"):
         lines.append(f"  - Page vision: {stats['vision_reads']} read(s), not included")
     return lines

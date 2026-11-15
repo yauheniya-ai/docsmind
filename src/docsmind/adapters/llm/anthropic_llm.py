@@ -149,6 +149,7 @@ class AnthropicLLM:
             + (getattr(u, "cache_creation_input_tokens", 0) or 0),
             output_tokens=u.output_tokens or 0,
             cached_input_tokens=getattr(u, "cache_read_input_tokens", 0) or 0,
+            cache_write_tokens=getattr(u, "cache_creation_input_tokens", 0) or 0,
         )
         stop: StopReason = "tool_use" if calls else _STOP.get(final.stop_reason or "", "other")
         return LLMResponse(text="".join(text_parts), tool_calls=calls, stop_reason=stop, usage=usage)

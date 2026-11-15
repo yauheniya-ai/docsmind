@@ -264,6 +264,7 @@ class PostgresRepository:
                 document_versions_table.c.label,
                 document_versions_table.c.created_at,
                 document_versions_table.c.word_count,
+                document_versions_table.c.content_hash,
                 pages.c.page_count,
             )
             .select_from(

@@ -1,4 +1,4 @@
-"""Web tools, for the Change Analyzer only: find and read a published changelog.
+"""Web tools, shared by every agent: search the web and read a public page or file (HTML, text, PDF, Word).
 
 Everything a web page says is untrusted DATA, like document text. The fetcher
 is hardened because the URL comes from a model: http(s) on ports 80/443 only,
@@ -19,11 +19,13 @@ import httpx
 from pydantic import BaseModel, Field
 
 from docsmind.agent.tools.base import Tool, ToolContext, ToolOutput
+from docsmind.agent.tools.extract import docx_text, pdf_pages, sniff_kind
 from docsmind.config import DocsmindConfig
 from docsmind.domain.errors import ToolInputError
 
 TAVILY_URL = "https://api.tavily.com/search"
-PAGE_CHARS = 10_000  # per fetch_url call; below agent_tool_result_max_chars so it is never cut again
+PAGE_CHARS = 10_000  # per read_url call; below agent_tool_result_max_chars so it is never cut again
+MAX_VISION_PAGES = 2
 MAX_REDIRECTS = 4
 ALLOWED_PORTS = {None, 80, 443}
 TEXT_TYPES = ("text/html", "application/xhtml", "text/plain", "text/markdown")
@@ -45,7 +47,6 @@ class WebSearchArgs(BaseModel):
 
 class WebSearchTool(Tool):
     name = "web_search"
-    subagent_only = True
     summary = (
         "Searches the public web, mainly to find a published changelog or release notes for a document. "
         "Needs a Tavily API key (DOCSMIND_WEB_SEARCH_API_KEY)."
@@ -53,11 +54,11 @@ class WebSearchTool(Tool):
     description = (
         "Search the public web. Returns the title, URL and an excerpt of each result. Use it to find "
         "an official changelog, revision history or release notes for a document; prefer the "
-        "publisher's own site. Read a result in full with fetch_url."
+        "publisher's own site. Read a result in full with read_url."
     )
     how_it_works = (
         "Sends the query (optionally limited to given domains) to the Tavily search API.",
-        "Returns each result's title, URL and excerpt. The model reads promising pages with fetch_url.",
+        "Returns each result's title, URL and excerpt. The model reads promising pages with read_url.",
         "Only offered when DOCSMIND_WEB_SEARCH_API_KEY is set.",
     )
     Args = WebSearchArgs
@@ -100,44 +101,75 @@ class WebSearchTool(Tool):
         return ToolOutput("\n\n".join(lines), summary=f"{len(lines)} results")
 
 
-# -- fetch_url -------------------------------------------------------------------------
+# -- read_url -------------------------------------------------------------------------
 
 
-class FetchUrlArgs(BaseModel):
-    url: str = Field(min_length=8, max_length=2000, description="Full http(s) URL of a public web page.")
-    offset: int = Field(default=0, ge=0, description="Character to start from, to continue a long page.")
+class ReadUrlArgs(BaseModel):
+    url: str = Field(min_length=8, max_length=2000, description="Full http(s) URL of a public page or file.")
+    offset: int = Field(default=0, ge=0, description="Character to start from, to continue a long document.")
+    vision_pages: list[int] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_VISION_PAGES,
+        description=(
+            "PDF only: page numbers (1-based, at most 2) to read as IMAGES by the vision model, for scanned "
+            "or layout-heavy pages whose text came out empty or garbled."
+        ),
+    )
+    question: str | None = Field(
+        default=None,
+        max_length=600,
+        description="With vision_pages: what to read off the page(s), e.g. 'Transcribe the table of changes'.",
+    )
 
 
-class FetchUrlTool(Tool):
-    name = "fetch_url"
-    subagent_only = True
-    summary = "Reads the text of one public web page, with its links, for example a changelog or release notes."
+class ReadUrlTool(Tool):
+    name = "read_url"
+    summary = "Reads a public web page or file (HTML, text, PDF or Word) and returns its text; scanned PDF pages can be read as images."
     description = (
-        "Fetch a public web page (HTML or plain text; not PDFs) and return its text, with link targets "
-        "shown as 'text (url)'. Long pages come in parts: pass the offset given at the end to continue. "
-        "Use it on a changelog, revision history or release-notes page."
+        "Fetch a public URL and return its text: web pages (HTML, with link targets shown as 'text (url)'), "
+        "plain text, PDF files (text per page, labelled [page N]) and Word (.docx) files. Long documents "
+        "come in parts: pass the offset given at the end to continue. If a PDF page has no readable text "
+        "the result lists it: call again with vision_pages=[N] and a question to read it as an image. "
+        "Use it on a changelog, revision history, release notes or standards bulletin. If a source cannot "
+        "be read, try another source or vision_pages, and say in your answer that it could not be read."
     )
     how_it_works = (
         "Accepts only public http(s) URLs: private and local addresses are refused, also after redirects.",
-        "Downloads the page (size and time limited) and converts the HTML to plain text, keeping link URLs.",
+        "Downloads the file (size and time limited) and picks the reader from the content type and first bytes.",
+        "HTML becomes plain text with link URLs; PDF text is extracted page by page; Word text keeps headings and tables.",
+        "Pages of a PDF without a text layer are listed; with vision_pages they are rendered and read by the vision model.",
         "Returns the text in parts of about 10,000 characters; the model asks for the next part with an offset.",
     )
-    Args = FetchUrlArgs
+    Args = ReadUrlArgs
 
-    async def run(self, args: FetchUrlArgs, ctx: ToolContext) -> ToolOutput:
-        final_url, content_type, body = await _fetch(args.url, ctx.config)
-        if "html" in content_type or "xml" in content_type:
-            title, text = _html_to_text(body, final_url)
-        else:
-            title, text = "", body.strip()
-        if not text:
+    async def run(self, args: ReadUrlArgs, ctx: ToolContext) -> ToolOutput:
+        cache_key = f"url:{args.url}"
+        cached = ctx.cache.get(cache_key)
+        if cached is None:
+            final_url, content_type, data, encoding = await fetch_bytes(
+                args.url, ctx.config, allowed=None, max_bytes=ctx.config.read_url_max_bytes
+            )
+            kind = sniff_kind(content_type, urlsplit(final_url).path, data)
+            if kind in ("pdf", "docx") and len(data) >= ctx.config.read_url_max_bytes:
+                raise ToolInputError(
+                    f"The file is larger than {ctx.config.read_url_max_bytes // 1_000_000} MB and cannot be read."
+                )
+            cached = ctx.cache[cache_key] = (final_url, kind, data, encoding)
+        final_url, kind, data, encoding = cached
+
+        if args.vision_pages:
+            return await self._read_as_images(args, ctx, final_url, kind, data)
+
+        title, label, text = await asyncio.to_thread(self._text_of, kind, data, encoding, final_url, ctx.config)
+        if not text.strip():
             return ToolOutput(f"{final_url} has no readable text.", summary="no text")
 
         total = len(text)
         if args.offset >= total:
-            raise ToolInputError(f"offset is past the end of the page ({total} characters).")
+            raise ToolInputError(f"offset is past the end of the document ({total} characters).")
         end = min(total, args.offset + PAGE_CHARS)
-        header = f"Web page: {final_url}" + (f"\nTitle: {title}" if title else "")
+        header = f"{label}: {final_url}" + (f"\nTitle: {title}" if title else "")
         footer = (
             f"\n[Showing characters {args.offset}-{end} of {total}. Call again with offset={end} for more.]"
             if end < total
@@ -145,6 +177,60 @@ class FetchUrlTool(Tool):
         )
         host = urlsplit(final_url).hostname or final_url
         return ToolOutput(f"{header}\n\n{text[args.offset:end]}{footer}", summary=f"{host} ({total} chars)")
+
+    @staticmethod
+    def _text_of(kind: str, data: bytes, encoding: str, url: str, config: DocsmindConfig) -> tuple[str, str, str]:
+        """-> (title, what it is, text)."""
+        if kind == "pdf":
+            pages = pdf_pages(data)
+            empty = [i for i, t in enumerate(pages, start=1) if len(t) < config.read_url_min_chars_per_page]
+            body = "\n".join(f"[page {i}]\n{t}" for i, t in enumerate(pages, start=1))
+            note = ""
+            if empty:
+                shown = ", ".join(str(i) for i in empty[:30]) + (" ..." if len(empty) > 30 else "")
+                note = (
+                    f"[Pages with little or no readable text (maybe scans or images): {shown}. "
+                    "Call read_url again with vision_pages=[N] and a question to read them as images.]\n"
+                )
+            return "", f"PDF ({len(pages)} pages)", note + body
+        if kind == "docx":
+            return "", "Word document", docx_text(data)
+        try:
+            raw = data.decode(encoding or "utf-8", errors="replace")
+        except LookupError:
+            raw = data.decode("utf-8", errors="replace")
+        if kind == "html":
+            title, text = _html_to_text(raw, url)
+            return title, "Web page", text
+        return "", "Text file", raw.strip()
+
+    @staticmethod
+    async def _read_as_images(args: ReadUrlArgs, ctx: ToolContext, url: str, kind: str, data: bytes) -> ToolOutput:
+        if kind != "pdf":
+            raise ToolInputError("vision_pages works on PDF files only.")
+        if ctx.vision is None:
+            raise ToolInputError("Page vision is not configured. Work from the extracted text.")
+        from docsmind.agent.tools.change import _render_pages  # lazy: change.py imports this module
+
+        pages = sorted(set(args.vision_pages or []))
+        if pages[0] < 1:
+            raise ToolInputError("Pages start at 1.")
+        images = await asyncio.to_thread(_render_pages, data, pages, ctx.config.change_vision_dpi)
+        text = await ctx.vision.read(
+            images,
+            question=args.question or "Transcribe all text on the page, keeping tables and clause numbers.",
+            mime_type="image/png",
+            max_tokens=ctx.config.change_vision_max_output_tokens,
+        )
+        if not text:
+            return ToolOutput("The vision model returned nothing for those pages.", summary="no text")
+        ctx.vision_log.append(text)
+        span = ", ".join(str(p) for p in pages)
+        host = urlsplit(url).hostname or url
+        return ToolOutput(
+            f"Read from the image of {url} p.{span} (vision model; check it against the text):\n{text}",
+            summary=f"{host} p.{span} (vision)",
+        )
 
 
 async def _assert_public(host: str) -> None:
@@ -196,7 +282,7 @@ async def fetch_bytes(
     `max_bytes` (default `web_fetch_max_bytes`) is cut."""
     url = _check_url(url)
     limit = max_bytes or config.web_fetch_max_bytes
-    headers = {"User-Agent": USER_AGENT, "Accept": "text/html,text/plain;q=0.9,*/*;q=0.1"}
+    headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain;q=0.9,*/*;q=0.5"}
     async with httpx.AsyncClient(timeout=config.web_timeout_s, follow_redirects=False, headers=headers) as client:
         for _ in range(MAX_REDIRECTS + 1):
             await _assert_public(urlsplit(url).hostname or "")

@@ -57,15 +57,27 @@ def info_rows(
     cost = meta.get("cost") or {}
     if cost.get("models"):
         head = usd(cost.get("usd", 0.0))
-        out.append(("Cost", head if cost.get("complete") else f"at least {head} (a model has no price in the table)"))
+        if not cost.get("complete"):
+            head = f"at least {head} (a model has no price in the table)"
+        elif cost.get("upper_bound"):
+            head = f"at most {head} (no cached price configured for a model)"
+        out.append(("Cost", head))
+        if cost.get("usd_without_cache"):
+            out.append(("  without caching", usd(cost["usd_without_cache"])))
+        out.append(("  cache hit rate", f"{cost.get('cache_hit_rate', 0.0):.0%}"))
         for m in cost["models"]:
-            used = f"{m['input_tokens']:,} input and {m['output_tokens']:,} output tokens"
             if m["usd"] is None:
-                out.append((f"  {m['model']}", f"{used}, not priced"))
-            else:
-                prices = f"${m['input_price']:g} / ${m['output_price']:g} per 1M tokens"
-                out.append((f"  {m['model']}", f"{used} at {prices} = {usd(m['usd'])}"))
-        out.append(("Cost basis", "List prices; cached input is not discounted; page vision tokens are not included."))
+                out.append((f"  {m['model']}", f"{m['input_tokens']:,} input and {m['output_tokens']:,} output tokens, not priced"))
+                continue
+            used = (
+                f"{m.get('uncached_input_tokens', m['input_tokens']):,} uncached + {m.get('cached_read_tokens', 0):,} cached read + "
+                f"{m.get('cache_write_tokens', 0):,} cache write + {m['output_tokens']:,} output"
+            )
+            out.append((f"  {m['model']}", f"{used} = {usd(m['usd'])}"))
+        for t in cost.get("tools") or []:
+            if t["usd"] > 0:
+                out.append((f"  tool: {t['tool']}", usd(t["usd"])))
+        out.append(("Cost basis", "List prices with cache discounts; page vision tokens are not included."))
     for stage, model in (meta.get("models") or {}).items():
         out.append((f"Model: {stage}", model))
     if meta.get("model_calls") is not None:

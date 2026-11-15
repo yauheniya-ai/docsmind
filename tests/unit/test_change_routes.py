@@ -125,3 +125,67 @@ def test_deleting_an_analysis_removes_its_rows(seeded):
     assert client.delete(f"/api/changes/{analysis.id}").status_code == 200
     assert client.get(f"/api/changes/{analysis.id}").status_code == 404
     assert client.delete(f"/api/changes/{analysis.id}").status_code == 404
+
+
+def test_deleting_a_row_archives_it_and_it_can_be_restored(seeded):
+    client, analysis, rows = seeded
+    row_id = rows[0].id
+    assert client.delete(f"/api/changes/{analysis.id}/rows/{row_id}").json()["archived"] is True
+
+    body = client.get(f"/api/changes/{analysis.id}").json()
+    assert [r["current_clause"] for r in body["rows"]] == ["Wording"] and body["archived_count"] == 1
+    archive = client.get(f"/api/changes/{analysis.id}/archive").json()["rows"]
+    assert [r["id"] for r in archive] == [str(row_id)] and archive[0]["archive_reason"] == "Deleted by user"
+    assert body["analysis"]["report_stale"] is False  # no report was written yet
+
+    assert client.post(f"/api/changes/{analysis.id}/rows/{rows[1].id}/restore").status_code == 422  # not archived
+    assert client.post(f"/api/changes/{analysis.id}/rows/{row_id}/restore").json()["status"] == "active"
+    assert client.get(f"/api/changes/{analysis.id}").json()["archived_count"] == 0
+
+
+def test_an_analysis_of_a_deleted_document_is_still_shown_from_its_snapshot(seeded):
+    client, analysis, _ = seeded
+    store = client.app.state.agent.changes
+    asyncio.run(
+        store.update_analysis(
+            analysis.id, previous_version_id=None, previous_doc={"title": "Retention Policy", "label": "2024"}
+        )
+    )
+    body = client.get(f"/api/changes/{analysis.id}").json()
+    assert body["current"]["deleted"] is False and body["previous"]["deleted"] is True
+    assert body["previous"]["title"] == "Retention Policy" and body["previous"]["version_id"] is None
+    assert len(body["rows"]) == 2  # the table is untouched
+
+
+def test_run_history_is_listed(seeded):
+    from docsmind.domain.changes import ChangeRun
+
+    client, analysis, _ = seeded
+    asyncio.run(client.app.state.agent.changes.add_run(ChangeRun(analysis_id=analysis.id, request="compare")))
+    runs = client.get(f"/api/changes/{analysis.id}/runs").json()["runs"]
+    assert [r["request"] for r in runs] == ["compare"]
+
+
+def test_an_edited_table_gets_its_report_rewritten_on_refresh_and_before_a_download(seeded):
+    from fakes import text
+
+    client, analysis, rows = seeded
+    agent = client.app.state.agent
+    asyncio.run(agent.changes.update_analysis(analysis.id, status="done", report="## Substantive changes\nOld."))
+
+    client.patch(f"/api/changes/{analysis.id}/rows/{rows[0].id}", json={"category": "security"})
+    assert client.get(f"/api/changes/{analysis.id}").json()["analysis"]["report_stale"] is True
+
+    agent.llm.queue("reporter", text("## Substantive changes\nFresh after the edit."))
+    body = client.post(f"/api/changes/{analysis.id}/report/refresh").json()
+    assert body["analysis"]["report_stale"] is False and "Fresh after the edit." in body["analysis"]["report"]
+    assert "Fresh after the edit." in body["report_markdown"]
+
+    # Editing again, then downloading: the download rewrites the report first.
+    client.patch(f"/api/changes/{analysis.id}/rows/{rows[0].id}", json={"category": "privacy"})
+    agent.llm.queue("reporter", text("## Substantive changes\nFresh for the download."))
+    download = client.get(f"/api/changes/{analysis.id}/report.md")
+    assert download.status_code == 200 and "Fresh for the download." in download.text
+
+    # A current report is not rewritten again (no scripted response is left: it would fail).
+    assert client.post(f"/api/changes/{analysis.id}/report/refresh").status_code == 200

@@ -8,14 +8,8 @@ import json
 from uuid import uuid4
 
 import pytest
-from fakes import FakeRepo, text
+from fakes import FakeRepo, text, tool_use
 
-from docsmind.adapters.storage.memory import (
-    InMemoryChangeStore,
-    InMemoryConversationStore,
-    InMemoryMemoryStore,
-)
-from docsmind.agent.agent import DocsmindAgent
 from docsmind.agent.catalog import Catalog
 from docsmind.agent.sources import SourceRegistry
 from docsmind.agent.subagents.change_analysis.analyzer import ChangeAnalyzer
@@ -398,26 +392,17 @@ ENCRYPTION_PROOF = {
 }
 
 
-@pytest.fixture
-def changes() -> InMemoryChangeStore:
-    return InMemoryChangeStore()
-
-
-@pytest.fixture
-def agent(config, llm, changes):
-    def build(repo):
-        return DocsmindAgent(
-            config,
-            llm=llm,
-            fast_llm=llm,
-            scan_llm=llm,
-            repository=repo,
-            conversations=InMemoryConversationStore(),
-            memory=InMemoryMemoryStore(),
-            changes=changes,
-        )
-
-    return build
+def agent_plan(llm, *, gaps: bool = False, final: str = "Done."):
+    """What the scripted Change Analyzer agent does: the typical order of a first comparison."""
+    llm.queue(
+        "agent",
+        tool_use(("check_versions", {})),
+        tool_use(("find_changelog", {}), ("scan_documents", {})),
+        tool_use(("verify_findings", {"which": "pending"})),
+        *([tool_use(("verify_findings", {"changelog_gaps": True}))] if gaps else []),
+        tool_use(("write_report", {})),
+        text(final),
+    )
 
 
 def script(
@@ -429,7 +414,10 @@ def script(
     decision=VERSIONS,
     finder: dict | None = None,
     report="## Substantive changes\nSee table.",
+    plan: bool = True,
 ):
+    if plan:
+        agent_plan(llm, gaps=bool(finder and finder.get("found")))
     llm.queue("decider", text(json.dumps(decision)))
     llm.queue("scanner", text(scan))
     llm.queue("finder", text(json.dumps(finder or {"found": False})))
@@ -500,7 +488,7 @@ async def test_pipeline_rejects_a_new_clause_whose_text_is_in_the_previous_versi
     result = await agent(repo).compare(repo.v2, repo.v1)
     assert result.rows == []  # a finished check that finds the text in B is a conclusion: no relaunch
     assert len(llm.calls_for("verifier")) == 1
-    assert "Log retention" not in result.analysis.report
+    assert not result.analysis.report  # nothing in the table: nothing to report
 
 
 async def test_a_check_that_goes_wrong_is_started_again(agent, llm):
@@ -516,22 +504,26 @@ async def test_a_check_that_goes_wrong_is_started_again(agent, llm):
     assert result.analysis.meta["verify_retries"] == 1
 
 
-async def test_a_row_stays_unverified_only_after_every_relaunch_failed(agent, llm):
+async def test_a_row_stays_unverified_only_after_every_relaunch_failed(agent, llm, changes):
     repo = VersionsRepo()
     no_phrases = {**ENCRYPTION_PROOF, "proof": [{"doc": "A", "page": 2, "text": "Encryption at rest is mandatory for all backups."}], "absence_phrases": []}
-    script(llm, scan=scan_text(ENCRYPTION), verifiers={"Backup encryption": no_phrases}, verifier_calls=4)
+    script(llm, scan=scan_text(ENCRYPTION, WORDING), verifiers={"Backup encryption": no_phrases}, verifier_calls=4)
     result = await agent(repo).compare(repo.v2, repo.v1)
-    (row,) = result.rows
+    # a check that could not run is no conclusion: the candidate stays pending, unverified, with the reason
+    (row,) = await changes.list_rows(result.analysis.id, status="candidate")
     assert not row.verified and "could not be checked" in (row.verification_note or "")
     assert "tried 4 times" in row.verification_note
     assert result.analysis.meta["verify_errors"] == 1 and len(llm.calls_for("verifier")) == 4
 
 
-async def test_identical_documents_make_no_model_call(agent, llm):
+async def test_identical_documents_need_no_check_model_call(agent, llm):
     repo = VersionsRepo(previous=CURRENT, current=CURRENT)
+    llm.queue("agent", tool_use(("check_versions", {})), text("The documents are identical: there is nothing to compare."))
     result = await agent(repo).compare(repo.v2, repo.v1)
     assert result.analysis is None and "identical" in result.message
-    assert llm.calls == []
+    assert not llm.calls_for("decider") and not llm.calls_for("scanner")  # only the agent itself ran
+    tool_result = llm.calls_for("agent")[1]["messages"][-1].content
+    assert "identical once headers, footers and page numbers are removed" in tool_result
 
 
 async def test_versions_check_can_swap_the_documents(agent, llm):
@@ -545,14 +537,17 @@ async def test_versions_check_can_swap_the_documents(agent, llm):
 async def test_unrelated_documents_stop_before_any_scan(agent, llm, changes):
     repo = VersionsRepo()
     llm.queue("decider", text(json.dumps({"verdict": "unrelated", "explanation": "One is a menu."})))
+    llm.queue("agent", tool_use(("check_versions", {})), text("These are not versions of one document."))
     result = await agent(repo).compare(repo.v2, repo.v1)
-    assert result.analysis is None and "One is a menu." in result.message
+    assert result.analysis is None and "not versions of one document" in result.message
+    assert "One is a menu." in llm.calls_for("agent")[1]["messages"][-1].content
     assert not llm.calls_for("scanner") and await changes.list_analyses() == []
 
 
 async def test_scan_is_resumed_after_a_cut_off_without_repeating_rows(agent, llm):
     repo = VersionsRepo()
     first = json.dumps(INVOICES) + '\n{"current_clause": "Backup enc'  # cut off mid-row
+    agent_plan(llm)
     llm.queue("decider", text(json.dumps(VERSIONS)))
     llm.queue("scanner", text(first), text(scan_text(INVOICES, ENCRYPTION)))  # the retry repeats row 1
     llm.queue("finder", text('{"found": false}'))
@@ -594,9 +589,9 @@ async def test_changelog_entry_without_a_row_is_checked_and_added(agent, llm):
 async def test_verify_existing_rechecks_a_row_that_could_not_be_checked(agent, llm, changes):
     repo = VersionsRepo()
     chat_agent = agent(repo)
-    script(llm, scan=scan_text(INVOICES), verifiers={"Invoice retention": "I could not decide."}, verifier_calls=4)
+    script(llm, scan=scan_text(INVOICES, WORDING), verifiers={"Invoice retention": "I could not decide."}, verifier_calls=4)
     result = await chat_agent.compare(repo.v2, repo.v1)
-    (row,) = result.rows
+    (row,) = await changes.list_rows(result.analysis.id, status="candidate")  # the check could not run: still pending
     assert not row.verified and "no usable result" in row.verification_note
 
     llm.queue("verifier", verifier({"Invoice retention": INVOICES_PROOF}))
@@ -605,7 +600,7 @@ async def test_verify_existing_rechecks_a_row_that_could_not_be_checked(agent, l
     message = await analyzer.verify_existing(result.analysis.id, [str(row.id)])
 
     stored = await changes.get_row(row.id)
-    assert stored.verified and stored.verification_note is None
+    assert stored.verified and stored.verification_note is None and stored.status == "active"  # proven: it joins the table
     assert "1 verified" in message
     assert (await changes.get_analysis(result.analysis.id)).status == "done"  # re-checking changes nothing else
 
@@ -653,12 +648,44 @@ def test_cost_comes_from_a_table_of_list_prices():
     assert not partial["complete"] and partial["models"][1]["usd"] is None
 
 
+def test_cost_uses_cache_prices_and_shows_what_caching_saved():
+    usage = Usage(input_tokens=1_000_000, output_tokens=100_000, cached_input_tokens=600_000, cache_write_tokens=100_000)
+    assert usage.uncached_input_tokens == 300_000
+    cost = cost_breakdown({"claude-sonnet-5-5": usage})  # $2 in, 0.1x read, 1.25x write, $10 out
+    assert cost["usd"] == pytest.approx(0.3 * 2.0 + 0.6 * 0.2 + 0.1 * 2.5 + 0.1 * 10.0)
+    assert cost["usd_without_cache"] == pytest.approx(1.0 * 2.0 + 0.1 * 10.0)
+    assert cost["cache_hit_rate"] == pytest.approx(0.6) and not cost["upper_bound"]
+    (entry,) = cost["models"]
+    assert entry["uncached_input_tokens"] == 300_000 and entry["cached_read_price"] == pytest.approx(0.2)
+
+
+def test_a_model_without_a_cached_price_is_an_upper_bound_until_one_is_configured():
+    usage = Usage(input_tokens=1_000_000, cached_input_tokens=500_000)
+    bound = cost_breakdown({"gpt-6.1-terra": usage})
+    assert bound["upper_bound"] and bound["usd"] == pytest.approx(1.0)  # cached read priced as input
+    exact = cost_breakdown({"gpt-6.1-terra": usage}, {"gpt-6.1": {"cached_read": 0.1}})
+    assert not exact["upper_bound"] and exact["usd"] == pytest.approx(0.5 * 1.0 + 0.5 * 0.1)
+
+
+def test_cost_by_tool_splits_the_run():
+    from docsmind.pricing import cost_by_tool
+
+    by_tool = {
+        ("scan_documents", "gpt-6.1-terra"): Usage(input_tokens=1_000_000),
+        ("verify_findings", "gpt-6.1-terra"): Usage(input_tokens=2_000_000),
+    }
+    tools = cost_by_tool(by_tool)
+    assert [t["tool"] for t in tools] == ["verify_findings", "scan_documents"]
+    assert tools[0]["usd"] == pytest.approx(2.0)
+
+
 async def test_the_report_states_what_the_run_cost(agent, llm):
     repo = VersionsRepo()
     script(llm, scan=scan_text(INVOICES), verifiers={"Invoice retention": INVOICES_PROOF})
     result = await agent(repo).compare(repo.v2, repo.v1)
     report = result.analysis.report
     assert "- Cost: at least $0.0000 at list prices" in report  # the scripted model has no price
+    assert "Cache hit rate" in report
     assert "  - fake-model:" in report and "not priced" in report
     cost = result.analysis.meta["cost"]
     assert not cost["complete"] and cost["models"][0]["model"] == "fake-model"
@@ -677,8 +704,8 @@ async def test_the_minds_delegate_returns_a_short_status_without_sources(agent, 
     registry = SourceRegistry()
     delegate = chat_agent._make_delegate(catalog, registry, Usage(), lambda _e: None)
 
-    out = await delegate("change_analyzer", "", ["D2", "D1"], {})
-    assert "Overall judgement: These are two versions of the same document" in out
+    out = await delegate("change_analyzer", "Compare these versions", ["D2", "D1"], {})
+    assert "Change analysis" in out and "1 changes, 1 compliance-relevant, 1 verified" in out
     assert "Backups must now be encrypted" not in out and "## Substantive changes" not in out
     assert "[S1]" not in out and "(A p.2" not in out
     assert len(out.splitlines()) <= 8
@@ -734,7 +761,7 @@ async def test_load_table_pages_and_filters_rows(config):
     assert missing.is_error and "Sheets: data" in missing.content
 
 
-async def test_export_excel_writes_a_download_and_filters(config, changes, tmp_path):
+async def test_create_file_exports_the_change_table_and_filters(config, changes, tmp_path):
     from openpyxl import load_workbook
 
     from docsmind.domain.changes import ChangeAnalysis
@@ -751,18 +778,18 @@ async def test_export_excel_writes_a_download_and_filters(config, changes, tmp_p
     await changes.add_row(wording)
     ctx = _ctx(config, changes=changes)
 
-    out = await _call(ctx, "export_excel", {"only": "actionable"})
-    assert not out.is_error and "Exported 1 rows" in out.content
+    out = await _call(ctx, "create_file", {"filename": "table", "format": "xlsx", "source": {"only": "actionable"}})
+    assert not out.is_error and "1 rows" in out.content
     name = out.content.split("/blobs/exports/")[1].rstrip(")")
     sheet = load_workbook(tmp_path / "exports" / name).active
     assert [c.value for c in sheet["A"]][1:] == ["Backup encryption"]
 
-    everything = await _call(ctx, "export_excel", {"analysis_id": str(analysis.id)})
-    assert "Exported 2 rows" in everything.content
-    nothing = await _call(ctx, "export_excel", {"natures": ["removed"]})
-    assert "nothing was exported" in nothing.content
+    everything = await _call(ctx, "create_file", {"filename": "table", "format": "xlsx", "source": {"change_table": str(analysis.id)}})
+    assert "2 rows" in everything.content
+    nothing = await _call(ctx, "create_file", {"filename": "table", "format": "xlsx", "source": {"natures": ["removed"]}})
+    assert nothing.is_error and "nothing was exported" in nothing.content
 
 
-async def test_export_excel_without_an_analysis_is_an_error_the_model_can_read(config, changes):
-    out = await _call(_ctx(config, changes=changes), "export_excel", {})
+async def test_create_file_without_an_analysis_is_an_error_the_model_can_read(config, changes):
+    out = await _call(_ctx(config, changes=changes), "create_file", {"filename": "t", "format": "csv", "source": {}})
     assert out.is_error and "no change analysis yet" in out.content.lower()

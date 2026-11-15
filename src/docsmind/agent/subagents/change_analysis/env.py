@@ -46,15 +46,27 @@ class RunEnv:
     embedder: Any = None
     usage: Usage = field(default_factory=Usage)
     usage_by_model: dict[str, Usage] = field(default_factory=dict)  # the same tokens, split by model (for the cost)
+    usage_by_tool_model: dict[tuple[str, str], Usage] = field(default_factory=dict)  # ... by (tool, model)
     sources: SourceRegistry = field(default_factory=SourceRegistry)
     model_calls: int = 0
     tool_steps: int = 0
+    model_call_limit: int = 0  # 0 = no limit; the request-wide cap on model calls (loops inside tools included)
     verify_retries: int = 0  # verification loops relaunched after a technical failure
     vision_reads: int = 0  # page_vision calls: their tokens are not reported by the vision adapter
 
-    def _count(self, model: str, usage: Usage) -> None:
+    @property
+    def budget_left(self) -> int | None:
+        """Model calls left in this request (None: no limit)."""
+        return max(0, self.model_call_limit - self.model_calls) if self.model_call_limit else None
+
+    @property
+    def budget_exhausted(self) -> bool:
+        return self.budget_left == 0
+
+    def _count(self, model: str, usage: Usage, tool: str = "other") -> None:
         self.usage.add(usage)
         self.usage_by_model.setdefault(model, Usage()).add(usage)
+        self.usage_by_tool_model.setdefault((tool, model), Usage()).add(usage)
 
     async def call(
         self,
@@ -64,6 +76,7 @@ class RunEnv:
         *,
         max_tokens: int,
         on_text: Callable[[str], Awaitable[None]] | None = None,
+        tool: str = "other",
     ) -> LLMResponse:
         self.model_calls += 1
         response = await llm.complete(
@@ -72,11 +85,13 @@ class RunEnv:
             max_tokens=max_tokens,
             on_text=on_text,
         )
-        self._count(llm.model, response.usage)
+        self._count(llm.model, response.usage, tool)
         return response
 
-    async def json_call(self, llm: LLM, system: str, user: str, *, max_tokens: int = 1024) -> dict | None:
-        response = await self.call(llm, system, user, max_tokens=max_tokens)
+    async def json_call(
+        self, llm: LLM, system: str, user: str, *, max_tokens: int = 1024, tool: str = "other"
+    ) -> dict | None:
+        response = await self.call(llm, system, user, max_tokens=max_tokens, tool=tool)
         return extract_json(response.text)
 
     async def loop(
@@ -90,6 +105,7 @@ class RunEnv:
         max_tokens: int,
         emit: Emit | None = None,
         tag: dict | None = None,
+        tool: str = "other",
     ) -> LoopOutcome:
         registry = self.tools.subset(tool_names).configured(self.config)
         bundle = PromptBundle(
@@ -127,7 +143,7 @@ class RunEnv:
                 event_tag=tag,
             )
         finally:
-            self._count(self.llm.model, usage)
+            self._count(self.llm.model, usage, tool)
             self.vision_reads += len(ctx.vision_log)
         self.tool_steps += result.steps
         self.model_calls += result.steps

@@ -187,37 +187,133 @@ def caption_estimate(
 
 # -- what a run of chat models cost ------------------------------------------------------------------------
 
+# Cache prices as a multiple of the input price, for providers that publish a fixed ratio (Anthropic:
+# a cache read costs 0.1x, a 5-minute cache write 1.25x). Models without an entry have no built-in
+# cached price: it falls back to the input price and the cost is marked as an upper bound. Override
+# any price with `DOCSMIND_MODEL_PRICES` (see config.py).
+CACHE_MULTIPLIERS: dict[str, tuple[float, float]] = {
+    "claude-": (0.1, 1.25),
+}
+
+
+@dataclass(frozen=True)
+class ModelPrice:
+    """USD per 1M tokens. `*_known` is False when the value is the input-price fallback."""
+
+    input: float
+    cached_read: float
+    cache_write: float
+    output: float
+    cached_read_known: bool = False
+    cache_write_known: bool = False
+
 
 def price_of(model: str) -> tuple[float, float] | None:
+    """(input, output) list price of `model`, or None. Longest prefix wins."""
     return lookup(MODEL_PRICES, model)
 
 
-def cost_breakdown(by_model: dict[str, Usage]) -> dict:
-    """-> {"usd": total of the priced models, "complete": every model had a price, "models": [...]}.
-    Cached input is billed at the full input price, so the figure is an upper bound when the
-    provider discounts cached tokens."""
+def model_price(model: str, overrides: dict[str, dict[str, float]] | None = None) -> ModelPrice | None:
+    """The four prices of `model`: built-in table, then the configured overrides (longest prefix)."""
+    base = price_of(model)
+    given = lookup(overrides, model) if overrides else None
+    given = given or {}
+    price_in = given.get("input", base[0] if base else None)
+    price_out = given.get("output", base[1] if base else None)
+    if price_in is None or price_out is None:
+        return None
+    mult = lookup(CACHE_MULTIPLIERS, model)
+    read = given.get("cached_read", price_in * mult[0] if mult else None)
+    write = given.get("cache_write", price_in * mult[1] if mult else None)
+    return ModelPrice(
+        input=price_in,
+        cached_read=read if read is not None else price_in,
+        cache_write=write if write is not None else price_in,
+        output=price_out,
+        cached_read_known=read is not None,
+        cache_write_known=write is not None,
+    )
+
+
+def _cost(usage: Usage, price: ModelPrice) -> tuple[float, float]:
+    """-> (cost with caching, cost if nothing had been cached), USD."""
+    actual = (
+        usage.uncached_input_tokens * price.input
+        + usage.cached_input_tokens * price.cached_read
+        + usage.cache_write_tokens * price.cache_write
+        + usage.output_tokens * price.output
+    ) / 1_000_000
+    plain = (usage.input_tokens * price.input + usage.output_tokens * price.output) / 1_000_000
+    return actual, plain
+
+
+def cost_breakdown(by_model: dict[str, Usage], overrides: dict[str, dict[str, float]] | None = None) -> dict:
+    """What a run cost, split by model:
+
+        cost = uncached*input + cached_read*cached_read + cache_write*cache_write + output*output
+
+    -> {"usd", "usd_without_cache", "cache_hit_rate", "complete" (every model had a price),
+        "upper_bound" (a cached or cache-write token was priced at the input price), "models": [...]}."""
     models = []
-    total = 0.0
-    complete = True
+    total = plain_total = 0.0
+    complete, upper_bound = True, False
+    cached = input_total = 0
     for model, usage in sorted(by_model.items()):
-        price = price_of(model)
-        cost = None
+        price = model_price(model, overrides)
+        cost = plain = None
+        bound = False
         if price is not None:
-            cost = (usage.input_tokens * price[0] + usage.output_tokens * price[1]) / 1_000_000
+            cost, plain = _cost(usage, price)
             total += cost
+            plain_total += plain
+            bound = (usage.cached_input_tokens > 0 and not price.cached_read_known) or (
+                usage.cache_write_tokens > 0 and not price.cache_write_known
+            )
+            upper_bound = upper_bound or bound
         else:
             complete = False
+        cached += usage.cached_input_tokens
+        input_total += usage.input_tokens
         models.append(
             {
                 "model": model,
                 "input_tokens": usage.input_tokens,
+                "uncached_input_tokens": usage.uncached_input_tokens,
+                "cached_read_tokens": usage.cached_input_tokens,
+                "cache_write_tokens": usage.cache_write_tokens,
                 "output_tokens": usage.output_tokens,
-                "input_price": price[0] if price else None,
-                "output_price": price[1] if price else None,
+                "input_price": price.input if price else None,
+                "cached_read_price": price.cached_read if price else None,
+                "cache_write_price": price.cache_write if price else None,
+                "output_price": price.output if price else None,
                 "usd": cost,
+                "usd_without_cache": plain,
+                "upper_bound": bound,
             }
         )
-    return {"usd": total, "complete": complete, "models": models}
+    return {
+        "usd": total,
+        "usd_without_cache": plain_total,
+        "cache_hit_rate": cached / input_total if input_total else 0.0,
+        "complete": complete,
+        "upper_bound": upper_bound,
+        "models": models,
+    }
+
+
+def cost_by_tool(
+    by_tool_model: dict[tuple[str, str], Usage], overrides: dict[str, dict[str, float]] | None = None
+) -> list[dict]:
+    """USD per tool (summed over the models it called), most expensive first. Unpriced models add nothing."""
+    out: dict[str, dict] = {}
+    for (tool, model), usage in by_tool_model.items():
+        entry = out.setdefault(tool, {"tool": tool, "usd": 0.0, "input_tokens": 0, "output_tokens": 0, "calls": 0})
+        entry["input_tokens"] += usage.input_tokens
+        entry["output_tokens"] += usage.output_tokens
+        price = model_price(model, overrides)
+        if price is not None:
+            entry["usd"] += _cost(usage, price)[0]
+    return sorted(out.values(), key=lambda e: e["usd"], reverse=True)
 
 
 def usd(value: float) -> str:

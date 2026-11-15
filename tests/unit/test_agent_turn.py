@@ -80,10 +80,11 @@ async def test_complex_turn_plans_and_delegates_the_comparison(config, llm, repo
     )
     llm.queue(
         "executor",
-        tool_use(("delegate", {"subagent": "change_analyzer", "documents": ["D1", "D2"]})),
+        tool_use(("delegate", {"subagent": "change_analyzer", "task": "Compare these", "documents": ["D1", "D2"]})),
         text("These are different documents, so there is no change table."),
     )
     explanation = "Retention Policy and Security Policy are different documents."
+    llm.queue("agent", tool_use(("check_versions", {})), text(explanation))
     llm.queue("decider", text(json.dumps({"verdict": "unrelated", "newer": "A", "public": False, "explanation": explanation})))
     llm.queue("memory", text('{"facts": [], "doc_notes": []}'))
     agent = make_agent(config, llm, repo)
@@ -153,7 +154,7 @@ async def test_router_failure_defaults_to_simple(config, llm, repo):
     agent = make_agent(config, llm, repo)
     events = await collect(agent, "hello")
     route = next(e for e in events if e.type == "route").data
-    assert route["route"] == "simple" and route["question"] == "hello"
+    assert route["route"] == "simple" and "question" not in route  # the router only routes: nothing is rewritten
 
 
 async def test_tool_errors_go_back_to_the_model_not_the_user(config, llm, repo):
@@ -288,11 +289,65 @@ def test_describe_gives_the_ui_plain_tool_summaries_and_stages(config, llm, repo
     assert [s["name"] for s in info["stages"]] == ["router", "planner"]
 
     analyzer = next(s for s in info["subagents"] if s["name"] == "change_analyzer")
-    assert [s["name"] for s in analyzer["stages"]] == ["versions_check", "scan", "changelog", "verify", "report"]
-    scan = analyzer["stages"][1]
-    assert scan["system_prompt"] and scan["model"] and scan["budget"]
-    assert scan["tools"] == []  # the scan is one model call: no tools
-    by_stage = {s["name"]: [t["name"] for t in s["tools"]] for s in analyzer["stages"]}
-    assert by_stage["verify"] == ["search", "grep", "read_pages", "page_vision"]
-    assert "web_search" in by_stage["changelog"] and "web_search" not in by_stage["verify"]
-    assert by_stage["versions_check"] == by_stage["report"] == []
+    assert analyzer["stages"] == []  # one agent with one toolbox, not a pipeline of stages
+    tiers = {t["name"]: t["tier"] for t in analyzer["tools"]}
+    assert tiers["search"] == tiers["read_url"] == tiers["create_file"] == "core"
+    assert tiers["get_table"] == tiers["archive_row"] == "table"
+    assert {n for n, t in tiers.items() if t == "advanced"} == {
+        "check_versions", "scan_documents", "find_changelog", "verify_findings", "write_report"
+    }  # fmt: skip
+    mind_tiers = {t["name"]: t["tier"] for t in info["agent"]["tools"]}
+    assert mind_tiers["delegate"] == "mind" and "get_table" not in mind_tiers and "scan_documents" not in mind_tiers
+    assert info["limits"]["change_agent_max_steps"] == 25 and info["limits"]["change_request_max_model_calls"] == 300
+
+
+async def test_a_delegate_route_skips_the_planner(config, llm, repo):
+    llm.queue("router", text('{"route": "delegate", "question": "Compare D1 with D2"}'))
+    llm.queue("executor", text("I will hand that to the Change Analyzer."))
+    llm.queue("memory", text('{"facts": [], "doc_notes": []}'))
+    agent = make_agent(config, llm, repo)
+    events = await collect(agent, "What changed between the two policies?")
+    await agent.drain()
+    route = next(e for e in events if e.type == "route")
+    assert route.data["route"] == "delegate"
+    assert "plan" not in types(events) and not llm.calls_for("planner")
+
+
+async def test_the_register_lists_the_stored_change_analyses(config, llm, repo):
+    from docsmind.domain.changes import ChangeAnalysis
+
+    agent = make_agent(config, llm, repo)
+    analysis = ChangeAnalysis(
+        current_version_id=repo.v2, previous_version_id=repo.v1, status="done", current_hash="hash-v2", previous_hash="hash-v1"
+    )
+    await agent.changes.create_analysis(analysis)
+    llm.queue("router", text('{"route": "simple", "question": "hi"}'))
+    llm.queue("executor", text("Hello."))
+    llm.queue("memory", text("{}"))
+    await collect(agent, "hi")
+    await agent.drain()
+    register = llm.calls_for("executor")[0]["system"][1].text
+    assert f"analysis {analysis.id}: D2 (2025) vs D1 (2024)" in register and "outdated" not in register
+
+
+async def test_delegate_needs_the_users_request_and_a_pair_or_an_analysis(config, llm, repo):
+    from docsmind.agent.catalog import Catalog
+    from docsmind.agent.sources import SourceRegistry
+    from docsmind.agent.tools import build_registry
+    from docsmind.agent.tools.base import ToolContext
+    from docsmind.domain.agent import ToolCall
+
+    async def delegate(*_args):
+        return "reported"
+
+    catalog = Catalog.from_rows(await repo.list_catalog())
+    ctx = ToolContext(repo=repo, catalog=catalog, sources=SourceRegistry(), config=config, emit=lambda e: None, delegate=delegate)
+
+    async def call(args):
+        return await build_registry().execute(ToolCall(id="1", name="delegate", arguments=args), ctx)
+
+    assert (await call({"subagent": "change_analyzer", "documents": ["D1", "D2"]})).is_error  # no request
+    no_pair = await call({"subagent": "change_analyzer", "task": "Verify row R3"})
+    assert no_pair.is_error and "documents=[current, previous]" in no_pair.content
+    assert not (await call({"subagent": "change_analyzer", "task": "Compare", "documents": ["D2", "D1"]})).is_error
+    assert not (await call({"subagent": "change_analyzer", "task": "Verify row R3", "analysis_id": "3f2a"})).is_error

@@ -75,6 +75,7 @@ async def find_changelog(
             max_tokens=4_096,
             emit=emit,
             tag=tag,
+            tool="find_changelog",
         )
     except Exception as exc:  # noqa: BLE001 - the comparison goes on without a changelog
         log.warning("Changelog search failed: %s: %s", type(exc).__name__, exc)
@@ -105,7 +106,7 @@ async def match_entries(env: RunEnv, entries: list[dict], rows: list[ChangeRow])
         ],
     }
     answer = await env.json_call(
-        env.fast_llm, prompts.CHANGELOG_MATCHER, json.dumps(payload, ensure_ascii=False), max_tokens=4_096
+        env.fast_llm, prompts.CHANGELOG_MATCHER, json.dumps(payload, ensure_ascii=False), max_tokens=4_096, tool="find_changelog"
     )
     for item in (answer or {}).get("matches") or []:
         if not isinstance(item, dict):
