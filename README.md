@@ -10,12 +10,10 @@
 
 Chat with your documents. Track what changed between versions, and why it matters.
 
-`docsmind` ingests PDFs (and soon DOCX/text) into a version-aware Postgres/pgvector
-store, and gives you an agent, **the Mind**, to analyze them. Built-in subagents
-will perform specialized tasks.
+`docsmind` ingests PDFs, DOCX, and text into a version-aware Postgres/pgvector
+store, and gives you an agent, **the Mind**, to analyze them. 
+Built-in subagents perform specialized tasks.
 
-> **Alpha.** Ingestion and inspection work today. Embeddings, chat and change analysis
-> are designed and scaffolded but not implemented yet; see [What works today](#what-works-today).
 
 ## What works today
 
@@ -31,7 +29,7 @@ will perform specialized tasks.
 | ✅ Image captioning (on demand) | The UI/CLI shows what's uncaptioned, estimates cost from image count/resolution, asks for confirmation, then captions only what's missing |
 | ✅ Embeddings + hybrid search (on demand) | The UI/CLI shows what's unembedded, estimates cost from token counts, asks for confirmation, then embeds only what's missing; search uses keyword+semantic fusion when available |
 | ✅ Change analysis | Compare two versions: a table of changes (new, modified, removed, editorial, relocated) with compliance requirements, each compliance-relevant row verified against the text with verbatim proof; a report; Excel export. `docsmind diff`, or ask the Mind in chat |
-| 🚧 DOCX/text parsers, S3/Supabase blob storage | Planned |
+| 🚧 DOCX/text parsers | Planned |
 
 ## Install
 
