@@ -658,12 +658,58 @@ function DocumentHeading({ doc, onSaved }: { doc: DocumentDetail; onSaved: (doc:
   )
 }
 
+function EnrichmentBanner({
+  kind,
+  enrichment,
+  onEstimate,
+  onCancel,
+}: {
+  kind: "embeddings" | "captions"
+  enrichment: EnrichmentStatus | null
+  onEstimate: (kind: "embeddings" | "captions") => void
+  onCancel: (jobId: string) => void
+}) {
+  const status = enrichment?.[kind]
+  if (!status || status.pending <= 0) return null
+  const job = status.job
+  const active = job && (job.status === "queued" || job.status === "running")
+  const title =
+    kind === "embeddings"
+      ? "Embeddings are not complete for this document."
+      : "Image captions are not complete for this document."
+  const unit = kind === "embeddings" ? "chunks embedded" : "images captioned"
+  return (
+    <Card className="mb-4 rounded-xl border-amber-500/40 bg-amber-500/5">
+      <CardContent className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-sm text-foreground/90">
+          <p className="font-medium">{title}</p>
+          <p className="text-muted-foreground">
+            {status.done.toLocaleString()} / {status.total.toLocaleString()} {unit}.
+            {job?.status === "running" && ` Running: ${job.done}/${job.total}.`}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {active ? (
+            <Button variant="outline" onClick={() => onCancel(job.id)} disabled={job.cancelling}>
+              {job.cancelling ? "Cancelling..." : "Cancel"}
+            </Button>
+          ) : (
+            <Button onClick={() => onEstimate(kind)}>Estimate & run</Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export function DocumentDetails() {
   const [, params] = useRoute<{ id: string }>("/documents/:id")
   const id: string | undefined = params ? params.id : undefined
 
   const [doc, setDoc] = useState<DocumentDetail | null>(null)
   const [fullText, setFullText] = useState<string | null>(null)
+  const [normalizedText, setNormalizedText] = useState<string | null>(null)
+  const [textView, setTextView] = useState<"extracted" | "normalized">("extracted")
   const [summary, setSummary] = useState<DocumentSummaryInfo | null>(null)
   const [outline, setOutline] = useState<Section[] | null>(null)
   const [chunks, setChunks] = useState<Chunk[] | null>(null)
@@ -699,6 +745,7 @@ export function DocumentDetails() {
 
     api.getDocument(id).then(setDoc).catch((e) => setError(e instanceof Error ? e.message : String(e)))
     api.getFulltext(id).then(setFullText).catch(() => setFullText(""))
+    api.getNormalizedText(id).then(setNormalizedText).catch(() => setNormalizedText(""))
     api.getSummary(id).then(setSummary).catch(() => setSummary({ summary: null, keywords: [] }))
     api.getOutline(id).then(setOutline).catch(() => setOutline([]))
     api
@@ -843,68 +890,6 @@ export function DocumentDetails() {
         </Button>
       </div>
 
-      {enrichment && (
-        <div className="mb-8 space-y-3">
-          {enrichment.embeddings.pending > 0 && (
-            <Card className="rounded-xl border-amber-500/40 bg-amber-500/5">
-              <CardContent className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-sm text-foreground/90">
-                  <p className="font-medium">Embeddings are not complete for this document.</p>
-                  <p className="text-muted-foreground">
-                    {enrichment.embeddings.done.toLocaleString()} / {enrichment.embeddings.total.toLocaleString()} chunks embedded.
-                    {enrichment.embeddings.job?.status === "running" &&
-                      ` Running: ${enrichment.embeddings.job.done}/${enrichment.embeddings.job.total}.`}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {enrichment.embeddings.job &&
-                  (enrichment.embeddings.job.status === "queued" || enrichment.embeddings.job.status === "running") ? (
-                    <Button
-                      variant="outline"
-                      onClick={() => cancelJob(enrichment.embeddings.job!.id)}
-                      disabled={enrichment.embeddings.job.cancelling}
-                    >
-                      {enrichment.embeddings.job.cancelling ? "Cancelling..." : "Cancel"}
-                    </Button>
-                  ) : (
-                    <Button onClick={() => openEstimate("embeddings")}>Estimate & run</Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {enrichment.captions.pending > 0 && (
-            <Card className="rounded-xl border-amber-500/40 bg-amber-500/5">
-              <CardContent className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-sm text-foreground/90">
-                  <p className="font-medium">Image captions are not complete for this document.</p>
-                  <p className="text-muted-foreground">
-                    {enrichment.captions.done.toLocaleString()} / {enrichment.captions.total.toLocaleString()} images captioned.
-                    {enrichment.captions.job?.status === "running" &&
-                      ` Running: ${enrichment.captions.job.done}/${enrichment.captions.job.total}.`}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {enrichment.captions.job &&
-                  (enrichment.captions.job.status === "queued" || enrichment.captions.job.status === "running") ? (
-                    <Button
-                      variant="outline"
-                      onClick={() => cancelJob(enrichment.captions.job!.id)}
-                      disabled={enrichment.captions.job.cancelling}
-                    >
-                      {enrichment.captions.job.cancelling ? "Cancelling..." : "Cancel"}
-                    </Button>
-                  ) : (
-                    <Button onClick={() => openEstimate("captions")}>Estimate & run</Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      )}
-
       <Tabs defaultValue="document">
         <TabsList className="h-auto flex-wrap justify-start">
           <TabsTrigger value="document" className="gap-1.5">
@@ -1002,21 +987,45 @@ export function DocumentDetails() {
         </TabsContent>
 
         <TabsContent value="text">
+          <div className="mb-4 inline-flex rounded-lg border border-border/60 bg-muted/40 p-0.5 text-sm">
+            {(["extracted", "normalized"] as const).map((view) => (
+              <button
+                key={view}
+                type="button"
+                onClick={() => setTextView(view)}
+                className={`rounded-md px-3 py-1 font-medium transition-colors ${
+                  textView === view ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {view === "extracted" ? "Extracted" : "Normalized for diff"}
+              </button>
+            ))}
+          </div>
+          {textView === "normalized" && (
+            <p className="mb-4 text-sm text-muted-foreground">
+              One sentence per line, with headers, footers and page numbers removed. This is the text the
+              change analysis compares.
+            </p>
+          )}
           <Card className="rounded-2xl border-border/60 shadow-sm overflow-hidden bg-card/80 backdrop-blur-sm">
             <CardContent className="p-6 md:p-10">
-              {fullText === null ? (
+              {(textView === "extracted" ? fullText : normalizedText) === null ? (
                 <div className="space-y-3">
                   <Skeleton className="h-5 w-full" />
                   <Skeleton className="h-5 w-full" />
                   <Skeleton className="h-5 w-2/3" />
                 </div>
-              ) : fullText.length === 0 ? (
+              ) : (textView === "extracted" ? fullText : normalizedText)!.length === 0 ? (
                 <p className="text-muted-foreground italic">
                   No full text saved for this version (re-ingest to backfill).
                 </p>
               ) : (
-                <div className="prose prose-slate max-w-none font-serif leading-relaxed text-foreground/90 whitespace-pre-wrap">
-                  {fullText}
+                <div
+                  className={`prose prose-slate max-w-none leading-relaxed text-foreground/90 whitespace-pre-wrap ${
+                    textView === "extracted" ? "font-serif" : "font-mono text-sm"
+                  }`}
+                >
+                  {textView === "extracted" ? fullText : normalizedText}
                 </div>
               )}
             </CardContent>
@@ -1024,6 +1033,12 @@ export function DocumentDetails() {
         </TabsContent>
 
         <TabsContent value="chunks">
+          <EnrichmentBanner
+            kind="embeddings"
+            enrichment={enrichment}
+            onEstimate={openEstimate}
+            onCancel={cancelJob}
+          />
           {chunks === null ? (
             <Skeleton className="h-64 w-full rounded-2xl" />
           ) : (
@@ -1032,6 +1047,12 @@ export function DocumentDetails() {
         </TabsContent>
 
         <TabsContent value="images">
+          <EnrichmentBanner
+            kind="captions"
+            enrichment={enrichment}
+            onEstimate={openEstimate}
+            onCancel={cancelJob}
+          />
           {images === null ? (
             <Skeleton className="h-64 w-full rounded-2xl" />
           ) : (

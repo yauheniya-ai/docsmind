@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react"
 import { Link, useLocation } from "wouter"
-import { BookOpen, Bot, BrainCircuit, Clock, Database, Search } from "lucide-react"
+import { BookOpen, Bot, BrainCircuit, Clock, Database, PanelLeftClose, Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { api, type DocumentSummary } from "@/lib/api"
 
-export function Sidebar() {
+export function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
   const [location] = useLocation()
   const [documents, setDocuments] = useState<DocumentSummary[] | null>(null)
 
@@ -37,11 +37,22 @@ export function Sidebar() {
         <div className="w-10 h-10 rounded-xl bg-primary text-primary-foreground flex items-center justify-center shadow-sm">
           <BrainCircuit className="w-5 h-5" strokeWidth={2.5} />
         </div>
-        <div>
+        <div className="flex-1">
           <h2 className="font-serif font-medium text-xl tracking-tight text-sidebar-primary leading-tight">
             DocsMind
           </h2>
         </div>
+        {onCollapse && (
+          <button
+            type="button"
+            onClick={onCollapse}
+            aria-label="Collapse sidebar"
+            title="Collapse sidebar"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+          >
+            <PanelLeftClose className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
       <nav className="flex-1 px-4 py-4 flex flex-col gap-1.5">

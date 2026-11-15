@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0] - 2026-11-15
+
+### Added
+
+- The Text tab can show the normalized text (one sentence per line, headers, footers and page
+  numbers removed) that the change analysis diffs. It is saved at ingest in
+  `document_versions.normalized_text` (migration 0006; run `docsmind db upgrade`) and served by
+  `GET /api/documents/{version_id}/normalized-text`, which backfills older versions.
+- The sidebar can be collapsed to give the main content more room.
+
+### Changed
+
+- The embeddings and image-caption warnings now appear in the Chunks and Images tabs instead of
+  above all tabs.
+- The local Docker Postgres listens on port 5434 (was 5433) to avoid clashing with other
+  containers. `.env.example` no longer points at 5432.
+- New icon on the "Table & report" button.
+
+### Fixed
+
+- PDF preview in the browser: the PDF.js `build/` folder was excluded by `.gitignore` and
+  missing from clones.
+
 ## [0.9.0] - 2026-11-13
 
 ### Added

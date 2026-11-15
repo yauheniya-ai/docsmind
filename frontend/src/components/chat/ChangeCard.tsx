@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { GitCompareArrows, Loader2, PanelRightOpen } from "lucide-react"
+import { GitCompareArrows, Loader2, FileSpreadsheet } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { api, isActionable, type ChangeDetail, type ChangeRow } from "@/lib/api"
 import type { AnalysisLive } from "@/lib/chat"
@@ -76,7 +76,7 @@ export function ChangeCard({
         </div>
       </div>
       <Button size="sm" variant={active ? "secondary" : "outline"} className="shrink-0 gap-1.5" onClick={() => onOpen(analysis.id)}>
-        <PanelRightOpen className="h-4 w-4" />
+        <FileSpreadsheet className="h-4 w-4" />
         {active ? "Open" : "Table & report"}
       </Button>
     </div>

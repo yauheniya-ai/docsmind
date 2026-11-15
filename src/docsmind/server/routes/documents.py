@@ -183,6 +183,23 @@ async def delete_document(request: Request, version_id: UUID) -> dict:
     return {"deleted": True, "id": str(version_id)}
 
 
+@router.get("/documents/{version_id}/normalized-text")
+async def get_normalized_text(request: Request, version_id: UUID) -> dict:
+    """The sentence-per-line text (headers, footers, page numbers removed) the change analysis
+    diffs. Saved at ingestion; versions ingested before that are computed once and saved here."""
+    repo = _repo(request)
+    text = await repo.get_normalized_text(version_id)
+    if text is None:
+        from docsmind.agent.subagents.change_analysis.prep import normalize
+
+        raw = await repo.get_full_text(version_id) or ""
+        catalog = await repo.list_catalog([version_id])
+        pages = (catalog[0].get("page_count") if catalog else None) or None
+        text = "\n".join(normalize(raw, pages=pages))
+        await repo.set_normalized_text(version_id, text)
+    return {"normalized_text": text}
+
+
 @router.get("/documents/{version_id}/fulltext")
 async def get_fulltext(request: Request, version_id: UUID) -> dict:
     repo = _repo(request)

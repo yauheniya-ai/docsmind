@@ -58,6 +58,8 @@ document_versions = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     # Added in migration 0002 — whole-document text + stats, 1:1 with the version.
     Column("full_text", Text, nullable=True),
+    # Added in migration 0006 — sentence-per-line text the change analysis diffs.
+    Column("normalized_text", Text, nullable=True),
     Column("char_count", Integer, nullable=True),
     Column("word_count", Integer, nullable=True),
     Column("token_count_estimate", Integer, nullable=True),

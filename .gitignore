@@ -1,4 +1,5 @@
 data/
+notes/
 
 # --- Python ---
 __pycache__/
@@ -63,3 +64,6 @@ alembic/versions/*.pyc
 # --- ui/ (Vite/React build output, once ui/ has a real app in it) ---
 ui/node_modules/
 ui/dist/
+
+# PDF.js viewer needs its build/ dir (overrides the generic build/ rule above)
+!frontend/public/pdfjs/build/

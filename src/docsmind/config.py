@@ -17,9 +17,9 @@ class DocsmindConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DOCSMIND_", env_file=".env", extra="ignore")
 
     # --- storage ---
-    # Matches docker-compose.yml's 5433 host port (chosen to avoid clashing
+    # Matches docker-compose.yml's 5434 host port (chosen to avoid clashing
     # with a locally-installed Postgres, e.g. Homebrew's default on macOS).
-    database_url: str = "postgresql+asyncpg://docsmind:docsmind@localhost:5433/docsmind"
+    database_url: str = "postgresql+asyncpg://docsmind:docsmind@localhost:5434/docsmind"
     blob_backend: str = "filesystem"  # filesystem | s3 | supabase
     blob_root: str = "./.docsmind/blobs"
     s3_bucket: str | None = None

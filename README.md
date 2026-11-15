@@ -1,12 +1,6 @@
 # docsmind
 
-[![PyPI version](https://img.shields.io/pypi/v/docsmind.svg)](https://pypi.org/project/docsmind/)
-[![Python versions](https://img.shields.io/pypi/pyversions/docsmind.svg)](https://pypi.org/project/docsmind/)
-[![Downloads](https://static.pepy.tech/badge/docsmind)](https://pepy.tech/project/docsmind)
-[![Downloads / month](https://static.pepy.tech/badge/docsmind/month)](https://pepy.tech/project/docsmind)
-[![License: MIT](https://img.shields.io/pypi/l/docsmind.svg)](https://github.com/yauheniya-ai/docsmind/blob/main/LICENSE)
-[![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#status)
+[![PyPI version](https://img.shields.io/pypi/v/docsmind.svg)](https://pypi.org/project/docsmind/) [![Python versions](https://img.shields.io/pypi/pyversions/docsmind.svg)](https://pypi.org/project/docsmind/) [![Downloads](https://static.pepy.tech/badge/docsmind)](https://pepy.tech/project/docsmind) [![Downloads / month](https://static.pepy.tech/badge/docsmind/month)](https://pepy.tech/project/docsmind) [![License: MIT](https://img.shields.io/pypi/l/docsmind.svg)](https://github.com/yauheniya-ai/docsmind/blob/main/LICENSE) [![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff) [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#status)
 
 > **An open research project** examining state-of-the-art agentic architectures for
 > document analysis, targeted at complex technical documentation in fields that live by
@@ -14,7 +8,7 @@
 > automotive, telecommunication, and more.
 
 <p align="center">
-  <img src="docs/Cover.png" alt="The docsmind web interface" width="800" />
+  <img src="docs/Cover.webp" alt="The docsmind web interface" width="800" />
   <br />
   <em>The docsmind web interface: bundled with the PyPI package and started with <code>docsmind serve</code>.</em>
 </p>
@@ -63,7 +57,7 @@ Pick one:
 
 **A. Local Docker (recommended for trying it out)**
 ```bash
-docsmind db up         # docker compose up -d, pgvector/pgvector image on port 5433
+docsmind db up         # docker compose up -d, pgvector/pgvector image on port 5434
 docsmind db upgrade    # applies migrations, creates the vector extension
 ```
 
@@ -382,6 +376,36 @@ uv run pytest
 `requires-python = ">=3.10"` is a floor, not a target. `uv sync` will use 3.12 (see
 `.python-version`), and CI (`.github/workflows/test.yml`) runs the tests across
 3.10, 3.11 and 3.12 so the floor is actually verified.
+
+### Run the backend
+
+```bash
+cp .env.example .env                 # then add your LLM key (needed for chat)
+docsmind db up && docsmind db upgrade
+uv run docsmind serve --reload       # FastAPI on http://127.0.0.1:8000
+```
+
+Use `--host` / `--port` to change the address. `docsmind doctor` verifies the setup.
+
+### Run the frontend
+
+In a second terminal, with the backend running:
+
+```bash
+cd frontend
+npm install
+npm run dev                          # Vite dev server, usually http://localhost:5173
+```
+
+The dev server proxies `/api` and `/blobs` to `http://127.0.0.1:8000`. If the backend
+runs elsewhere, set `VITE_API_PROXY_TARGET`:
+
+```bash
+VITE_API_PROXY_TARGET=http://127.0.0.1:9000 npm run dev
+```
+
+`npm run build` writes the production UI into `src/docsmind/server/ui`, which is what
+`docsmind serve` serves when no dev server is used.
 
 To try the parser on a PDF without a database:
 

@@ -408,6 +408,12 @@ export const api = {
   getFulltext: (versionId: string) =>
     request<{ full_text: string }>(`/api/documents/${versionId}/fulltext`).then((r) => r.full_text),
 
+  /** Sentence-per-line text (headers/footers/page numbers removed) that the change analysis diffs. */
+  getNormalizedText: (versionId: string) =>
+    request<{ normalized_text: string }>(`/api/documents/${versionId}/normalized-text`).then(
+      (r) => r.normalized_text,
+    ),
+
   /** AI-generated summary + keywords. Resolves to an empty result if enrichment isn't available yet. */
   getSummary: (versionId: string) =>
     request<DocumentSummaryInfo>(`/api/documents/${versionId}/summary`).catch(

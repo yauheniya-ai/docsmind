@@ -16,6 +16,7 @@ from pathlib import Path
 
 from docsmind.adapters.blobs.filesystem import FilesystemBlobStore
 from docsmind.adapters.storage.postgres.repository import PostgresRepository
+from docsmind.agent.subagents.change_analysis.prep import normalize
 from docsmind.config import DocsmindConfig
 from docsmind.domain.documents import Document, DocumentVersion
 from docsmind.domain.errors import DocumentAlreadyExistsError
@@ -70,6 +71,12 @@ class IngestionPipeline:
         await self.repo.create_document(document)
         await self.repo.create_version(version, full_text=parsed.full_text, stats=parsed.stats)
         await self.repo.save_parsed(parsed)
+
+        # The sentence-per-line text the Change Analyzer diffs; saved so it can be inspected.
+        pages = max((c.page_end or c.page_start or 0 for c in parsed.chunks), default=0) or None
+        await self.repo.set_normalized_text(
+            version.id, "\n".join(normalize(parsed.full_text, pages=pages))
+        )
 
         return version
 

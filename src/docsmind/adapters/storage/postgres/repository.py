@@ -680,6 +680,25 @@ class PostgresRepository:
             row = result.first()
             return row[0] if row else None
 
+    async def get_normalized_text(self, version_id: UUID) -> str | None:
+        async with self._sessionmaker() as session:
+            result = await session.execute(
+                select(document_versions_table.c.normalized_text).where(
+                    document_versions_table.c.id == version_id
+                )
+            )
+            row = result.first()
+            return row[0] if row else None
+
+    async def set_normalized_text(self, version_id: UUID, text: str) -> None:
+        async with self._sessionmaker() as session:
+            await session.execute(
+                update(document_versions_table)
+                .where(document_versions_table.c.id == version_id)
+                .values(normalized_text=text)
+            )
+            await session.commit()
+
     async def get_sections(self, version_id: UUID) -> list[dict]:
         """The saved section tree for one version, in document order — the
         same shape `examples/parse_pdf_demo.py` prints, but read back from
