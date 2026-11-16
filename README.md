@@ -24,19 +24,19 @@ See [Change analysis](#change-analysis).
 
 ## What works today
 
-| | |
-|---|---|
-| ✅ PDF ingestion | Full text, stats, outline (from the PDF's own table of contents), page-based chunks, images |
-| ✅ Postgres + pgvector storage | Local Docker, or any Postgres with pgvector (Neon, Supabase) |
-| ✅ Inspection CLI | `versions`, `fulltext`, `outline`, `chunks` read back exactly what was saved |
-| ✅ `docsmind doctor` | Checks database, blob storage and API keys, and tells you what to fix |
-| ✅ Table extraction | Extract and store tables skipping repeating ones (e.g. headers or footers) |
-| ✅ server + UI | FastAPI backend (`docsmind serve`) + React UI (`frontend/`): add documents, browse indexed content, image and table galleries |
-| ✅ Chat agent (the Mind) | Routes each question, plans complex ones, searches/reads your documents with tools, delegates to subagents, and answers with verified `[S#]` citations. Streams to the UI over SSE; conversations are saved |
-| ✅ Image captioning (on demand) | The UI/CLI shows what's uncaptioned, estimates cost from image count/resolution, asks for confirmation, then captions only what's missing |
-| ✅ Embeddings + hybrid search (on demand) | The UI/CLI shows what's unembedded, estimates cost from token counts, asks for confirmation, then embeds only what's missing; search uses keyword+semantic fusion when available |
-| ✅ Change analysis | Compare two versions: a table of changes (new, modified, removed, editorial, relocated) with compliance requirements, each compliance-relevant row verified against the text with verbatim proof; a report; Excel export. `docsmind diff`, or ask the Mind in chat |
-| 🚧 DOCX/text parsers | Planned |
+|                                           |                                                                                                                                                                                                                                                                      |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ✅ PDF ingestion                          | Full text, stats, outline (from the PDF's own table of contents), page-based chunks, images                                                                                                                                                                          |
+| ✅ Postgres + pgvector storage            | Local Docker, or any Postgres with pgvector (Neon, Supabase)                                                                                                                                                                                                         |
+| ✅ Inspection CLI                         | `versions`, `fulltext`, `outline`, `chunks` read back exactly what was saved                                                                                                                                                                                 |
+| ✅ `docsmind doctor`                    | Checks database, blob storage and API keys, and tells you what to fix                                                                                                                                                                                                |
+| ✅ Table extraction                       | Extract and store tables skipping repeating ones (e.g. headers or footers)                                                                                                                                                                                           |
+| ✅ server + UI                            | FastAPI backend (`docsmind serve`) + React UI (`frontend/`): add documents, browse indexed content, image and table galleries                                                                                                                                    |
+| ✅ Chat agent (the Mind)                  | Routes each question, plans complex ones, searches/reads your documents with tools, delegates to subagents, and answers with verified `[S#]` citations. Streams to the UI over SSE; conversations are saved                                                        |
+| ✅ Image captioning (on demand)           | The UI/CLI shows what's uncaptioned, estimates cost from image count/resolution, asks for confirmation, then captions only what's missing                                                                                                                            |
+| ✅ Embeddings + hybrid search (on demand) | The UI/CLI shows what's unembedded, estimates cost from token counts, asks for confirmation, then embeds only what's missing; search uses keyword+semantic fusion when available                                                                                     |
+| ✅ Change analysis                        | Compare two versions: a table of changes (new, modified, removed, editorial, relocated) with compliance requirements, each compliance-relevant row verified against the text with verbatim proof; a report; Excel export. `docsmind diff`, or ask the Mind in chat |
+| 🚧 DOCX/text parsers                      | Planned                                                                                                                                                                                                                                                              |
 
 ## Install
 
@@ -56,17 +56,20 @@ Extras: `docsmind[openai]`, `docsmind[anthropic]`, `docsmind[server]` (FastAPI, 
 Pick one:
 
 **A. Local Docker (recommended for trying it out)**
+
 ```bash
 docsmind db up         # docker compose up -d, pgvector/pgvector image on port 5434
 docsmind db upgrade    # applies migrations, creates the vector extension
 ```
 
 **B. Neon or Supabase** (no Docker needed; both support pgvector)
+
 ```bash
 # in .env:
 # DOCSMIND_DATABASE_URL=postgresql+asyncpg://<user>:<password>@<host>/<db>
 docsmind db upgrade
 ```
+
 Extracted images are saved to local disk (`DOCSMIND_BLOB_ROOT`) for now. S3 and
 Supabase Storage backends are planned.
 
@@ -177,6 +180,12 @@ Question -> Orchestrator --simple--> Executor <-> Tools / Subagents -> Answer
   untrusted data, never as instructions.
 - **Search** is Postgres full-text (ranked) plus exact-text grep; when embeddings exist, semantic vector matches are fused in via reciprocal rank fusion.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/yauheniya-ai/docsmind/main/docs/Agents.png" alt="Agent architecture of docsmind: a main agent with subagents, their tools and the harness" width="800" />
+  <br />
+  <em>Agent architecture: a main agent delegates to subagents, which use shared tools inside a common harness.</em>
+</p>
+
 ### Change analysis
 
 The Change Analyzer is an autonomous system that compares two versions of a standard or policy
@@ -284,20 +293,20 @@ heuristics that work on one PDF break on the next.
 
 ## CLI reference
 
-| Command | What it does |
-|---|---|
-| `docsmind ingest <file> -c <collection> [-v <label>]` | Parse a PDF and save it |
-| `docsmind versions` | List ingested versions with ids and stats |
-| `docsmind fulltext <id> [--full]` | Print the saved full text |
-| `docsmind outline <id>` | Print the saved outline |
-| `docsmind chunks <id> [--page N] [--full]` | Print saved chunks |
-| `docsmind delete <id> [-y]` | Delete one version and its derived chunks/images/tables |
-| `docsmind db up` / `upgrade` / `psql` | Start local Postgres, apply migrations, open psql |
-| `docsmind doctor` | Check your setup |
-| `docsmind serve [--host] [--port] [--reload]` | Run the FastAPI backend for the `frontend/` UI |
-| `docsmind chat [question] [-c <collection>]` | Ask the Mind once, or start a REPL that keeps the conversation |
-| `docsmind embed [--version-id <id>] [-y]` | Estimate cost and create missing embeddings on demand |
-| `docsmind caption [--version-id <id>] [-y]` | Estimate cost and create missing image captions on demand |
+| Command                                                  | What it does                                                    |
+| -------------------------------------------------------- | --------------------------------------------------------------- |
+| `docsmind ingest <file> -c <collection> [-v <label>]`  | Parse a PDF and save it                                         |
+| `docsmind versions`                                    | List ingested versions with ids and stats                       |
+| `docsmind fulltext <id> [--full]`                      | Print the saved full text                                       |
+| `docsmind outline <id>`                                | Print the saved outline                                         |
+| `docsmind chunks <id> [--page N] [--full]`             | Print saved chunks                                              |
+| `docsmind delete <id> [-y]`                            | Delete one version and its derived chunks/images/tables         |
+| `docsmind db up` / `upgrade` / `psql`              | Start local Postgres, apply migrations, open psql               |
+| `docsmind doctor`                                      | Check your setup                                                |
+| `docsmind serve [--host] [--port] [--reload]`          | Run the FastAPI backend for the `frontend/` UI                |
+| `docsmind chat [question] [-c <collection>]`           | Ask the Mind once, or start a REPL that keeps the conversation  |
+| `docsmind embed [--version-id <id>] [-y]`              | Estimate cost and create missing embeddings on demand           |
+| `docsmind caption [--version-id <id>] [-y]`            | Estimate cost and create missing image captions on demand       |
 | `docsmind diff <a> <b> [--actionable] [--xlsx <file>]` | Compare two versions: change table, report, optional Excel file |
 
 ## Architecture
