@@ -576,6 +576,12 @@ export function AgentPanel({
               </Badge>
             )}
             <p className="text-sm leading-relaxed text-muted-foreground">{node.detail.description}</p>
+            {extra}
+            {node.detail.prompt && (
+              <Section icon={ScrollText} title="Prompt">
+                <PromptCard text={node.detail.prompt} />
+              </Section>
+            )}
           </div>
         )}
       </div>

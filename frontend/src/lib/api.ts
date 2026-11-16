@@ -203,7 +203,37 @@ export interface AgentInfo {
     memory_model: string
     memory_enabled: boolean
     /** Plain-language description of each part of the harness. */
-    components?: { name: string; title: string; description: string; model: string | null; enabled: boolean }[]
+    components?: {
+      name: string
+      title: string
+      description: string
+      model: string | null
+      enabled: boolean
+      /** The system prompt of the small model, for the parts that have one. */
+      prompt?: string
+    }[]
+    /** The limits that shape the harness. */
+    settings?: {
+      history_budget_tokens: number
+      recent_turns: number
+      summary_max_words: number
+      summary_max_output_tokens: number
+      memory_max_items_per_kind: number
+      memory_note_max_chars: number
+      memory_recall_limit: number
+      memory_max_output_tokens: number
+      context_budget_tokens: number
+    }
+    /** Prices in force, USD per 1M tokens, for the models this app runs. */
+    prices?: {
+      model: string
+      used_by: string
+      input: number | null
+      cached_read: number | null
+      cache_write: number | null
+      output: number | null
+      cache_prices_known: boolean
+    }[]
   }
   subagents: AgentCardInfo[]
   limits: {

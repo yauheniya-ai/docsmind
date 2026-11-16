@@ -96,7 +96,7 @@ export type Kind = "mind" | "subagent" | "stage" | "tool"
 export type NodeDetail =
   | { type: "agent"; agent: AgentCardInfo | AgentStageInfo }
   | { type: "tool"; tool: AgentToolInfo }
-  | { type: "text"; description: string; model?: string | null }
+  | { type: "text"; description: string; model?: string | null; prompt?: string }
 
 export interface GraphNode {
   id: string

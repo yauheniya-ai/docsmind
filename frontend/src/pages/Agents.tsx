@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
-import { ArrowRight, Bot, Cpu, DollarSign, Layers, Wrench, Brain, type LucideIcon } from "lucide-react"
+import { ArrowRight, Bot, Cpu, DollarSign, Layers, Wrench, Brain, createLucideIcon, type LucideIcon } from "lucide-react"
 import { AgentPanel } from "@/components/agents/AgentPanel"
 import { buildGraph, humanize, ICONS, type GraphNode } from "@/components/agents/model"
+import { ContextDiagram, CostDiagram, MemoryDiagram, SummarizerDiagram } from "@/components/agents/HarnessDiagrams"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api, type AgentInfo, type AgentStageInfo, type AgentToolInfo } from "@/lib/api"
@@ -17,9 +18,18 @@ const GROUPS: { tier: NonNullable<AgentToolInfo["tier"]>; title: string }[] = [
   { tier: "advanced", title: "Steps" },
 ]
 
+/** lucide's `summary` icon: newer than the installed lucide-react, so defined here with its exact paths. */
+const Summary = createLucideIcon("summary", [
+  ["path", { d: "M15 4H7", key: "1" }],
+  ["path", { d: "m18 16 3 3-3 3", key: "2" }],
+  ["path", { d: "M3 4v13a2 2 0 0 0 2 2h16", key: "3" }],
+  ["path", { d: "M7 14h7", key: "4" }],
+  ["path", { d: "M7 9h12", key: "5" }],
+])
+
 const HARNESS_ICONS: Record<string, LucideIcon> = {
   context_builder: Layers,
-  summarizer: Layers,
+  summarizer: Summary,
   memory_writer: Brain,
   cost_tracking: DollarSign,
 }
@@ -219,7 +229,7 @@ export function Agents() {
         title: c.title,
         role: "Harness · plain code around every agent",
         text: c.description,
-        detail: { type: "text", description: c.description, model: c.model },
+        detail: { type: "text", description: c.description, model: c.model, prompt: c.prompt },
       })),
     [info],
   )
@@ -254,7 +264,15 @@ export function Agents() {
   }, [info])
 
   const extra =
-    info && selectedId === MIND ? (
+    info && selectedId === "harness:context_builder" ? (
+      <ContextDiagram harness={info.harness} />
+    ) : info && selectedId === "harness:summarizer" ? (
+      <SummarizerDiagram harness={info.harness} />
+    ) : info && selectedId === "harness:memory_writer" ? (
+      <MemoryDiagram harness={info.harness} />
+    ) : info && selectedId === "harness:cost_tracking" ? (
+      <CostDiagram harness={info.harness} />
+    ) : info && selectedId === MIND ? (
       <MindSteps info={info} onOpen={setSelectedId} />
     ) : info && selectedId === ANALYZER ? (
       <AnalyzerNotes info={info} />

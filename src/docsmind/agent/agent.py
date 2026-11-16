@@ -22,7 +22,7 @@ from uuid import UUID
 from docsmind.agent import prompts
 from docsmind.agent.catalog import Catalog
 from docsmind.agent.harness.context import ContextBuilder, TurnState
-from docsmind.agent.harness.memory import RECALL_LIMIT, MemoryWriter
+from docsmind.agent.harness.memory import MAX_ITEMS_PER_KIND, MAX_NOTE_CHARS, RECALL_LIMIT, MemoryWriter
 from docsmind.agent.harness.summarizer import Summarizer
 from docsmind.agent.loop import run_tool_loop
 from docsmind.agent.orchestrator import Orchestrator
@@ -198,6 +198,46 @@ class DocsmindAgent:
 
     # -- public API ----------------------------------------------------------------
 
+    def _price_table(self) -> list[dict]:
+        """The prices in force (USD per 1M tokens) for the models this app runs: the chat model, the
+        small model, the embedding model. Built-in table plus the configured overrides."""
+        from docsmind.pricing import lookup, EMBEDDING_PRICES, model_price
+
+        fast = self.config.agent_fast_model or self.config.llm_model
+        uses: dict[str, list[str]] = {}
+        uses.setdefault(self.config.llm_model, []).append("Mind, Change Analyzer")
+        uses.setdefault(fast, []).append("router, planner, summarizer, memory writer")
+        rows: list[dict] = []
+        for model, used_by in uses.items():
+            price = model_price(model, self.config.model_prices)
+            rows.append(
+                {
+                    "model": model,
+                    "used_by": ", ".join(used_by),
+                    "input": price.input if price else None,
+                    "cached_read": price.cached_read if price else None,
+                    "cache_write": price.cache_write if price else None,
+                    "output": price.output if price else None,
+                    "cache_prices_known": bool(price and price.cached_read_known and price.cache_write_known),
+                }
+            )
+        embedding = getattr(self.config, "embedding_model", None)
+        if embedding:
+            override = self.config.embedding_price_per_million
+            price = override if override is not None else lookup(EMBEDDING_PRICES, embedding)
+            rows.append(
+                {
+                    "model": embedding,
+                    "used_by": "embeddings (ingestion, search)",
+                    "input": price,
+                    "cached_read": None,
+                    "cache_write": None,
+                    "output": None,
+                    "cache_prices_known": False,
+                }
+            )
+        return rows
+
     def describe(self) -> dict:
         """Static description of the agent and its subagents, for the UI."""
         fast = self.config.agent_fast_model or self.config.llm_model
@@ -282,6 +322,18 @@ class DocsmindAgent:
                 "summarizer_model": fast,
                 "memory_model": fast,
                 "memory_enabled": self.config.agent_memory_enabled,
+                "settings": {
+                    "history_budget_tokens": self.config.agent_history_budget_tokens,
+                    "recent_turns": self.config.agent_recent_turns,
+                    "summary_max_words": 250,
+                    "summary_max_output_tokens": 600,
+                    "memory_max_items_per_kind": MAX_ITEMS_PER_KIND,
+                    "memory_note_max_chars": MAX_NOTE_CHARS,
+                    "memory_recall_limit": RECALL_LIMIT,
+                    "memory_max_output_tokens": 400,
+                    "context_budget_tokens": self.config.agent_context_budget_tokens,
+                },
+                "prices": self._price_table(),
                 "components": [
                     {
                         "name": "context_builder",
@@ -299,10 +351,12 @@ class DocsmindAgent:
                         "title": "Summarizer",
                         "model": fast,
                         "enabled": True,
+                        "prompt": prompts.SUMMARIZER,
                         "description": (
-                            f"When a conversation outgrows its history budget ({self.config.agent_history_budget_tokens:,} "
-                            f"tokens), a small model folds the older turns into a running summary. The last "
-                            f"{self.config.agent_recent_turns} exchanges always stay word for word."
+                            f"Short-term memory, inside one conversation. When the verbatim history outgrows its budget "
+                            f"({self.config.agent_history_budget_tokens:,} tokens), a small model folds the older turns into "
+                            f"one running summary (at most 250 words, rewritten each time it runs, so it never keeps "
+                            f"growing). The last {self.config.agent_recent_turns} exchanges always stay word for word."
                         ),
                     },
                     {
@@ -310,11 +364,14 @@ class DocsmindAgent:
                         "title": "Memory writer",
                         "model": fast if self.config.agent_memory_enabled else None,
                         "enabled": self.config.agent_memory_enabled,
+                        "prompt": prompts.MEMORY_WRITER,
                         "description": (
-                            "After each answer, a small model decides whether anything is worth keeping: facts about "
-                            "the user and notes about documents. They are recalled in later conversations and shown to "
-                            "the agent as possibly outdated, to be checked against the documents."
-                        ),
+                            "Long-term memory, across conversations. After each answer, a small model decides whether anything "
+                            "is worth keeping: facts the user stated about themselves and notes about documents. Notes "
+                            "are stored, never written by the agent itself. On later turns the newest are recalled "
+                            "(no search: facts always, document notes only for documents in the register) and shown "
+                            "to the agent as possibly outdated, to be checked against the documents."
+                            ),
                     },
                     {
                         "name": "cost_tracking",
@@ -323,8 +380,10 @@ class DocsmindAgent:
                         "enabled": True,
                         "description": (
                             "Plain code. Counts uncached, cached-read, cache-write and output tokens of every model "
-                            "call and prices them per model, per tool and per run, with the cache hit rate."
-                        ),
+                            "call and prices them per model, per tool and per run, with the cache hit rate. "
+                            "Prices come from a built-in table that can be overridden with DOCSMIND_MODEL_PRICES; "
+                            "an unknown model shows no cost rather than a wrong one."
+                            ),
                     },
                 ],
             },

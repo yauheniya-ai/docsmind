@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Agents page: the four parts of the harness now open with an explanation. The context builder shows the layers of a prompt, the cache mark and who sees what; the summarizer shows folded turns, the running summary and the last exchanges, with its prompt, trigger and size; the memory writer shows its prompt, how notes are written and recalled, and how it differs from the summarizer; cost tracking shows the formula and a table of the prices in force. The summarizer has its own icon.
+- The agent API returns the harness limits, the prompts of the summarizer and memory writer, and the price table.
 - Activity cards are simpler: the bottom row (Documents, No sources, Delete) is gone, and a delete icon sits inside the card.
 
 ## [0.10.1] - 2026-11-16
