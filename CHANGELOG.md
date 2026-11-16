@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.10.0] - 2026-11-15
+## [0.10.0] - 2026-11-16
 
 ### Added
 
@@ -52,7 +52,6 @@ All notable changes to this project will be documented in this file.
   documents as A and B with clickable page references, never as D1/D2 or [S#] markers.
 - The activity trace of a turn is saved with the answer and shown again, collapsed, when the conversation is reopened.
   The misleading "N documents in scope" line is gone.
-
 - A changelog that is a spreadsheet or CSV is imported by code: the agent only names the columns (clause, kind of
   change, description) and every row becomes an entry, instead of paging through it 40 rows at a time and retyping
   it. A later search that finds nothing, or less, no longer replaces a changelog that was found. The trace lists the
@@ -107,7 +106,6 @@ All notable changes to this project will be documented in this file.
   the analysis, so the Excel "Info" sheet, the file names and the report keep the title the
   documents had when they were compared.
 
-
 ## [0.8.0] - 2026-11-12
 
 ### Added
@@ -116,9 +114,9 @@ All notable changes to this project will be documented in this file.
   gateway/proxy URL works for both providers (chat, vision, embeddings). An empty value means the
   default endpoint. `docsmind doctor` shows the base URL in use. `.env.example` lists keys and
   base URLs together.
-
 - Change Analyzer rebuilt as a code-driven pipeline (`agent/subagents/change_analysis/`) that the
   Mind starts with `delegate`. Given the current and the previous version, it:
+
   1. normalizes both texts and diffs them in code (headers, footers and page numbers removed);
   2. checks that they are versions of one document and which is newer (a small model call);
   3. scans for changes with one long-context call per part, streaming rows into the table;
@@ -173,7 +171,6 @@ All notable changes to this project will be documented in this file.
 - The `researcher` subagent (code, prompt, tests and UI). `change_analyzer` is now the only
   subagent.
 - The generic subagent loop and `agent_subagent_max_steps`; the Change Analyzer has its own limits.
-
 
 ## [0.7.0] - 2026-11-12
 
@@ -297,8 +294,6 @@ All notable changes to this project will be documented in this file.
 - Image extraction de-duplicates repeated embedded images (e.g. page logo reused
   across many pages) using perceptual hash, preventing inflated image counts.
 - API duplicate-ingest responses now return HTTP 409 with structured details.
-
-
 
 ## [0.2.0] - 2026-09-27
 
