@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.1] - 2026-11-16
+
+### Fixed
+
+- The demo in the README is linked via its raw GitHub URL, so it also shows on PyPI.
+
+### Docs
+
+- The README shows the agent architecture: the main agent, its subagents, the tools and the harness.
+
 ## [0.10.0] - 2026-11-16
 
 ### Added
