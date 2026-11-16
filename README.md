@@ -274,6 +274,12 @@ HTTP: `POST /api/chat` streams Server-Sent Events (`route`, `plan`, `tool_start`
 
 `docsmind` ingests PDFs, common Office documents (DOCX, XLSX, PPTX, including legacy variants), and text into a version-aware Postgres/pgvector store, and gives you an agent, **the Mind**, to analyze them. Other formats (images, audio, video, and code files) are planned for a later implementation.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/yauheniya-ai/docsmind/main/docs/Register.png" alt="Register: a document's page with its version and collection, size counts, and tabs for the summary, outline, text, chunks, images and tables next to the original PDF" width="800" />
+  <br />
+  <em>Register: a document's page with its version and collection, size counts, and tabs for the summary, outline, text, chunks, images and tables next to the original PDF.</em>
+</p>
+
 Ingestion is deliberately simple and predictable. There's no layout guessing, because
 heuristics that work on one PDF break on the next.
 

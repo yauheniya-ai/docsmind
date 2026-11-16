@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.2] - 2026-11-16
+
+### Added
+
+- Activity: filter conversations by collection and by document.
+- Activity: a confirmation dialog before a conversation is deleted.
+
+### Changed
+
+- Activity cards are simpler: the bottom row (Documents, No sources, Delete) is gone, and a delete icon sits inside the card.
+
 ## [0.10.1] - 2026-11-16
 
 ### Fixed
