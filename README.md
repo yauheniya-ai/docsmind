@@ -8,7 +8,7 @@
 > automotive, telecommunication, and more.
 
 <p align="center">
-  <img src="docs/Cover.webp" alt="The docsmind web interface" width="800" />
+  <img src="https://raw.githubusercontent.com/yauheniya-ai/docsmind/main/docs/Cover.webp" alt="The docsmind web interface" width="800" />
   <br />
   <em>The docsmind web interface: bundled with the PyPI package and started with <code>docsmind serve</code>.</em>
 </p>
