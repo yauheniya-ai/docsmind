@@ -9,6 +9,8 @@ All notable changes to this project will be documented in this file.
 - Python 3.13 and 3.14 are tested in CI (unit tests and lint pass on both) and listed in the package classifiers.
 - `docsmind version` and `docsmind --version`; the version is read from the installed package, so `pyproject.toml` is its only source. FastAPI reports it too.
 
+- Tests are split into `tests/unit`, `tests/integration` (real Postgres via Docker) and `tests/e2e` (real CLI and server).
+
 ### Changed
 
 - `pip install docsmind` installs everything: the OpenAI and Anthropic SDKs and the web server are core dependencies. The `openai`, `anthropic`, `server`, `all`, `mlflow` and `langfuse` extras are gone; only `dev` remains.
@@ -22,6 +24,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Uploading a document that is already ingested crashed with a server error instead of returning the 409 "already exists" response.
 - Import-order lint errors in `agent/agent.py` that failed the CI lint step.
 
 

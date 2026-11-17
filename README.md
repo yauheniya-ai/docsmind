@@ -413,8 +413,14 @@ git clone https://github.com/yauheniya-ai/docsmind
 cd docsmind
 uv sync --all-groups --all-extras   # or: pip install -e ".[dev]"
 docsmind db up && docsmind db upgrade
-uv run pytest
+uv run pytest                      # everything (needs Docker)
+uv run pytest tests/unit           # fast, no Docker
 ```
+
+Tests live in three folders: `tests/unit` (pure logic with fakes), `tests/integration` (a real
+Postgres + pgvector in a throwaway Docker container: ingestion, search, the documents API, the
+Mind answering from the database) and `tests/e2e` (the real CLI and server as subprocesses,
+driven over HTTP). Without Docker, the last two are skipped.
 
 `requires-python = ">=3.10"` is a floor, not a target. `uv sync` will use 3.12 (see
 `.python-version`), and CI (`.github/workflows/test.yml`) runs the tests across

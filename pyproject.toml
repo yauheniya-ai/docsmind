@@ -80,6 +80,10 @@ include = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+  "integration: needs Docker (a real Postgres with pgvector)",
+  "e2e: runs the real CLI and server as subprocesses; needs Docker",
+]
 
 [tool.ruff]
 line-length = 100

@@ -10,6 +10,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
 from docsmind.domain.errors import DocumentAlreadyExistsError
@@ -113,7 +114,7 @@ async def create_document(
                 detail={
                     "error": "already_exists",
                     "message": str(exc),
-                    "existing_version": exc.existing_version,
+                    "existing_version": jsonable_encoder(exc.existing_version),
                 },
             ) from exc
         except Exception as exc:
