@@ -8,7 +8,7 @@
 > automotive, telecommunication, and more.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/yauheniya-ai/docsmind/main/docs/Cover.webp" alt="The docsmind web interface" width="800" />
+  <img src="https://raw.githubusercontent.com/yauheniya-ai/docsmind/main/.github/images/Cover.webp" alt="The docsmind web interface" width="800" />
   <br />
   <em>The docsmind web interface: bundled with the PyPI package and started with <code>docsmind serve</code>.</em>
 </p>
@@ -177,7 +177,7 @@ Question -> Router --simple/delegate--> Executor <-> Tools / Subagents -> Answer
   keyword search.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/yauheniya-ai/docsmind/main/docs/Agents.png" alt="Agent architecture of docsmind: a main agent with subagents, their tools and the harness" width="800" />
+  <img src="https://raw.githubusercontent.com/yauheniya-ai/docsmind/main/.github/images/Agents.png" alt="Agent architecture of docsmind: a main agent with subagents, their tools and the harness" width="800" />
   <br />
   <em>Agent architecture: a main agent delegates to subagents, which use shared tools inside a common harness.</em>
 </p>
@@ -293,7 +293,7 @@ Today `docsmind` ingests **PDF only**. Word, Excel and PowerPoint files, plain t
 audio, video and code files are planned; no parser for them exists yet.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/yauheniya-ai/docsmind/main/docs/Register.png" alt="Register: a document's page with its version and collection, size counts, and tabs for the summary, outline, text, chunks, images and tables next to the original PDF" width="800" />
+  <img src="https://raw.githubusercontent.com/yauheniya-ai/docsmind/main/.github/images/Register.png" alt="Register: a document's page with its version and collection, size counts, and tabs for the summary, outline, text, chunks, images and tables next to the original PDF" width="800" />
   <br />
   <em>Register: a document's page with its version and collection, size counts, and tabs for the summary, outline, text, chunks, images and tables next to the original PDF.</em>
 </p>
@@ -375,7 +375,7 @@ src/docsmind/
 ├── cli/                   # Typer app (commands above)
 └── server/                # FastAPI app + routes (documents, chat SSE, changes, enrichment)
 
-alembic/   tests/   examples/   docs/   frontend/
+alembic/   tests/   examples/   docs/   frontend/   .github/ (workflows, README images)
 ```
 
 The UI source lives in this repository under `frontend/` (React + TypeScript +

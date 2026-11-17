@@ -4,8 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-DEFAULT_INPUT="$PROJECT_ROOT/docs/Cover.mov"
-DEFAULT_OUTPUT="$PROJECT_ROOT/docs/Cover.webp"
+DEFAULT_INPUT="$PROJECT_ROOT/.github/images/Cover.mov"
+DEFAULT_OUTPUT="$PROJECT_ROOT/.github/images/Cover.webp"
 
 INPUT="${1:-$DEFAULT_INPUT}"
 OUTPUT="${2:-$DEFAULT_OUTPUT}"

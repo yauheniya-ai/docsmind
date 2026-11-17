@@ -20,6 +20,7 @@ All notable changes to this project will be documented in this file.
 ### Docs
 
 - README revised end to end: PDF-only ingestion, planned features marked, Router and Change Analyzer descriptions, endpoints and architecture tree.
+- README images moved from `docs/` to `.github/images/`.
 - New `docs/Harness.md`; the harness diagram's status is corrected (Evals planned, Memory partial).
 
 ### Fixed
