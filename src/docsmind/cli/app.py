@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import typer
 
+from docsmind import __version__
 from docsmind.cli import db, doctor, ingest
 
 app = typer.Typer(
@@ -13,6 +14,28 @@ app = typer.Typer(
     help="Chat with your documents. Version-aware retrieval and change analysis.",
     no_args_is_help=True,
 )
+
+
+def _show_version(value: bool) -> None:
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    version: bool = typer.Option(
+        False, "--version", help="Show the version and exit.", callback=_show_version, is_eager=True
+    ),
+) -> None:
+    pass
+
+
+@app.command("version")
+def _version() -> None:
+    """Show the installed docsmind version."""
+    typer.echo(__version__)
+
 
 app.command("ingest")(ingest.ingest)
 app.add_typer(db.app, name="db")

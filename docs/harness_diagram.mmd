@@ -18,22 +18,22 @@ flowchart TB
     end
 
     U["User / App<br/>goal or request"]
-    EV["8 · Evals<br/>golden sets: published changelogs and change tables<br/>downloaded online, compared with Change Analyzer results;<br/>missing: trajectory vs outcome, LLM-as-judge, regression tests"]
+    EV["8 · Evals<br/>not built yet: golden sets (published changelogs,<br/>reference change tables), trajectory vs outcome,<br/>LLM-as-judge, regression runs"]
 
     subgraph H["1 · Harness Engineering: full, safe, observable stack"]
-        G["7 · Guardrails & Permissions<br/>read-only tools, untrusted-data rule, verified citations;<br/>still missing: I/O filtering, scoped access"]
+        G["7 · Guardrails & Permissions<br/>untrusted-data rule, verified citations and proof quotes,<br/>step, time and size caps, web tools only for public documents;<br/>missing: I/O filtering, scoped access, approval for file writes"]
 
         subgraph CORE["Agent core"]
-            C["3 · Context Engineering<br/>instructions, data, history,<br/>retrieval, compression"]
-            A["2 · Loop Engineering<br/>think, plan, act, evaluate<br/>stop rules, max iterations"]
+            C["3 · Context Engineering<br/>stable-first prompt with cache mark, document register,<br/>memory, summary, plan, history budget"]
+            A["2 · Loop Engineering<br/>tool loop with parallel calls, step budget,<br/>forced final answer, old tool results elided"]
             C --> A
         end
 
-        T["4 · Tool Design<br/>clear names, strict schemas,<br/>helpful errors, fewer tools"]
-        M["5 · Memory<br/>short-term, long-term, semantic<br/>retrieve and write"]
-        O["6 · Orchestration<br/>router/orchestrator, handoffs,<br/>parallel vs sequential"]
+        T["4 · Tool Design<br/>clear names, strict schemas, errors go back<br/>to the model, timeouts, truncated results"]
+        M["5 · Memory<br/>short-term: history + running summary; long-term: notes<br/>written after each answer, recalled per document;<br/>missing: semantic (vector) recall of notes"]
+        O["6 · Orchestration<br/>router (simple / complex / delegate), planner,<br/>subagent handoff with a fresh context"]
         HITL["9 · Human-in-the-Loop<br/>Change Analyzer: a person approves, edits, adds<br/>and deletes table rows and runs row verification;<br/>missing: approval gates for the Mind's own actions"]
-        OBS["10 · Observability & Tracing<br/>live activity trace and saved conversations;<br/>missing: pluggable tracing (MLflow, Langfuse),<br/> metrics, alerts"]
+        OBS["10 · Observability & Tracing<br/>live activity trace, saved conversations with trace,<br/>token and cost tracking per run;<br/>missing: pluggable tracing (MLflow, Langfuse), metrics, alerts"]
     end
 
     U --> G --> C
@@ -56,9 +56,9 @@ flowchart TB
     classDef planned fill:#eeece8,stroke:#626d84,color:#626d84,stroke-dasharray:5 4
     classDef actor fill:#ffffff,stroke:#e5e2dc,color:#1b2232
 
-    class C,A,T,M,O,L1 done
-    class G,OBS,HITL,EV,L2 partial
-    class L3 planned
+    class C,A,T,O,L1 done
+    class G,M,OBS,HITL,L2 partial
+    class EV,L3 planned
     class U actor
 
     style H fill:#faf8f5,stroke:#e5e2dc,color:#1b2232

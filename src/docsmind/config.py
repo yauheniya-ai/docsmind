@@ -29,8 +29,8 @@ class DocsmindConfig(BaseSettings):
     supabase_bucket: str = "docsmind"
 
     # --- models ---
-    llm_provider: str = "anthropic"  # anthropic | openai
-    llm_model: str = "claude-sonnet-5-5"
+    llm_provider: str = "openai"  # anthropic | openai
+    llm_model: str = "gpt-6.1-terra"
     embedding_provider: str = "openai"
     embedding_model: str = "text-embedding-3-large"
     # text-embedding-3-large's native dimensionality is 3072. OpenAI lets you
@@ -38,8 +38,8 @@ class DocsmindConfig(BaseSettings):
     # quality cost if 3072-dim storage/index size becomes a concern — if you
     # do that, set this to match, since it drives the `vector(N)` column.
     embedding_dimensions: int = 3072
-    vision_provider: str = "anthropic"  # anthropic | openai
-    # Model used to caption images and read pages. Unset = claude-sonnet-5-5 (anthropic) or gpt-6-luna (openai).
+    vision_provider: str = "openai"  # anthropic | openai
+    # Model used to caption images and read pages. Unset = gpt-6-luna (openai) or claude-sonnet-5-5 (anthropic).
     vision_model: str | None = None
 
     anthropic_api_key: str | None = None

@@ -61,7 +61,7 @@ class OpenAILLM:
             from openai import AsyncOpenAI, BadRequestError
         except ImportError as exc:  # pragma: no cover - import guard
             raise LLMConfigurationError(
-                'The openai package is not installed. Run `pip install "docsmind[openai]"`.'
+                'The openai package is not installed. Run `pip install docsmind`.'
             ) from exc
         self.model = model
         self._bad_request = BadRequestError

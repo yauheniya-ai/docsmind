@@ -1,6 +1,5 @@
 """`docsmind serve` — runs the FastAPI app (`server/app.py`) behind uvicorn,
-for the `frontend/` UI to talk to. Requires the `server` extra:
-`pip install "docsmind[server]"`.
+for the `frontend/` UI to talk to.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ def serve(
         import uvicorn
     except ImportError as exc:  # pragma: no cover - import guard
         console.print(
-            "[red]uvicorn isn't installed.[/red] Run `pip install \"docsmind[server]\"` first."
+            "[red]uvicorn isn't installed.[/red] Reinstall with `pip install --force-reinstall docsmind`."
         )
         raise typer.Exit(1) from exc
 

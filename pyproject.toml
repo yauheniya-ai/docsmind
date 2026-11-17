@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "docsmind"
-version = "0.10.2"
+version = "0.10.3"
 description = "Chat with your documents. Version-aware retrieval, change analysis, and an editable table workspace, backed by Postgres/pgvector."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,6 +22,8 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Text Processing :: Indexing",
 ]
 
@@ -41,16 +43,17 @@ dependencies = [
     "tiktoken>=0.7",
     "openpyxl>=3.1",
     "python-docx>=1.1",
+    # LLM providers (both SDKs ship by default so switching DOCSMIND_*_PROVIDER just works).
+    "openai>=1.30",
+    "anthropic>=0.34",
+    # Web server and bundled UI (`docsmind serve`).
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
-openai = ["openai>=1.30"]
-anthropic = ["anthropic>=0.34"]
-server = ["fastapi>=0.111", "uvicorn[standard]>=0.30", "python-multipart>=0.0.9"]
-mlflow = ["mlflow>=2.14"]
-langfuse = ["langfuse>=2.0"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "testcontainers[postgres]>=4.4", "ruff>=0.5", "mypy>=1.10"]
-all = ["docsmind[openai,anthropic,server]"]
 
 [dependency-groups]
 dev = ["build>=1.6.1", "twine>=7.0.0"]
@@ -72,7 +75,6 @@ include = [
   "src/docsmind/**",
   "README.md",
   "CHANGELOG.md",
-  "scripts/bundle_frontend.py",
 ]
 
 [tool.pytest.ini_options]

@@ -1,8 +1,8 @@
 """FastAPI application for the `docsmind` UI (`frontend/`).
 
 Thin by design: routes delegate to `PostgresRepository` / `AsyncDocsmind`
-exactly like the CLI does. This module is only imported when the `server`
-extra is installed (`pip install "docsmind[server]"`) — see `cli/serve.py`,
+exactly like the CLI does. This module is imported lazily by
+`cli/serve.py`,
 which is the only place that imports it eagerly.
 """
 
@@ -15,13 +15,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from docsmind import __version__
 from docsmind.config import DocsmindConfig
 
 
 def create_app(config: DocsmindConfig | None = None) -> FastAPI:
     config = config or DocsmindConfig()
 
-    app = FastAPI(title="docsmind", description="Chat with your documents.")
+    app = FastAPI(title="docsmind", description="Chat with your documents.", version=__version__)
 
     # Dev-friendly default: the Vite dev server runs on a different port.
     # Tighten this (or drive it from config) before exposing a deployment

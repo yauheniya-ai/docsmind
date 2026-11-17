@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.3] - 2026-11-17
+
+### Added
+
+- Python 3.13 and 3.14 are tested in CI (unit tests and lint pass on both) and listed in the package classifiers.
+- `docsmind version` and `docsmind --version`; the version is read from the installed package, so `pyproject.toml` is its only source. FastAPI reports it too.
+
+### Changed
+
+- `pip install docsmind` installs everything: the OpenAI and Anthropic SDKs and the web server are core dependencies. The `openai`, `anthropic`, `server`, `all`, `mlflow` and `langfuse` extras are gone; only `dev` remains.
+- OpenAI is the default for chat (`gpt-6.1-terra`) and image captions, so a first install needs only `DOCSMIND_OPENAI_API_KEY`. Claude is still one setting away.
+- The frontend build writes straight into the package; the missing `bundle_frontend.py` step is removed.
+
+### Docs
+
+- README revised end to end: PDF-only ingestion, planned features marked, Router and Change Analyzer descriptions, endpoints and architecture tree.
+- New `docs/Harness.md`; the harness diagram's status is corrected (Evals planned, Memory partial).
+
+### Fixed
+
+- Import-order lint errors in `agent/agent.py` that failed the CI lint step.
+
+
+
 ## [0.10.2] - 2026-11-16
 
 ### Added

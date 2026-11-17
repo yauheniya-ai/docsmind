@@ -22,7 +22,12 @@ from uuid import UUID
 from docsmind.agent import prompts
 from docsmind.agent.catalog import Catalog
 from docsmind.agent.harness.context import ContextBuilder, TurnState
-from docsmind.agent.harness.memory import MAX_ITEMS_PER_KIND, MAX_NOTE_CHARS, RECALL_LIMIT, MemoryWriter
+from docsmind.agent.harness.memory import (
+    MAX_ITEMS_PER_KIND,
+    MAX_NOTE_CHARS,
+    RECALL_LIMIT,
+    MemoryWriter,
+)
 from docsmind.agent.harness.summarizer import Summarizer
 from docsmind.agent.loop import run_tool_loop
 from docsmind.agent.orchestrator import Orchestrator
@@ -201,7 +206,7 @@ class DocsmindAgent:
     def _price_table(self) -> list[dict]:
         """The prices in force (USD per 1M tokens) for the models this app runs: the chat model, the
         small model, the embedding model. Built-in table plus the configured overrides."""
-        from docsmind.pricing import lookup, EMBEDDING_PRICES, model_price
+        from docsmind.pricing import EMBEDDING_PRICES, lookup, model_price
 
         fast = self.config.agent_fast_model or self.config.llm_model
         uses: dict[str, list[str]] = {}

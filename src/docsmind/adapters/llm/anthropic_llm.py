@@ -45,7 +45,7 @@ class AnthropicLLM:
             from anthropic import AsyncAnthropic
         except ImportError as exc:  # pragma: no cover - import guard
             raise LLMConfigurationError(
-                'The anthropic package is not installed. Run `pip install "docsmind[anthropic]"`.'
+                'The anthropic package is not installed. Run `pip install docsmind`.'
             ) from exc
         self.model = model
         self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, max_retries=3, timeout=timeout)

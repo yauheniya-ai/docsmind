@@ -29,7 +29,7 @@ class OpenAIEmbedder:
             from openai import AsyncOpenAI
         except ImportError as exc:  # pragma: no cover - import guard
             raise EnrichmentConfigurationError(
-                'The openai package is not installed. Run `pip install "docsmind[openai]"`.'
+                'The openai package is not installed. Run `pip install docsmind`.'
             ) from exc
         self.model_name = model
         self.dimensions = dimensions
